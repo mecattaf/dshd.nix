@@ -271,9 +271,9 @@ yet in the home is created by DSH itself: dshd runs
 environment, then reads the `package.json` DSH wrote. For any other
 missing profile, DSH's refusal is the error.
 
-- Editing a profile changes every instance of it at its next start, as it
-  would change `dsh` typed by hand; a running instance keeps what it
-  booted.
+- Editing a profile changes every instance of it as it would change `dsh`
+  typed by hand: at its next start, or at once in a running instance whose
+  profile enables DSH's HMR.
 - An instance's settings UI and plugin manager write into the profile, as
   they do for `dsh` typed by hand.
 - `dsh --profile <p> --dump-config` shows what an instance composes at its
@@ -324,7 +324,9 @@ At creation dshd captures the environment of the `dshd run` command,
 minus a closed list, and stores it in `instance.json` (0600). There is no
 `--env` flag: `K=V dshd run ...` and `env -u K dshd run ...` are the
 interface. `get` shows names only, never values, and every later start
-reuses the captured environment.
+reuses the captured environment. That includes any secret exported in the
+shell: name it in the release's `unsetEnvironment`, or start with
+`env -u NAME dshd run ...`, to keep it out of the record.
 
 | Never captured | Names |
 |---|---|

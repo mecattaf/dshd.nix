@@ -1,0 +1,41 @@
+{
+  "id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+  "name": "review",
+  "release": "%RELEASE%",
+  "cwd": "%ROOT%/work",
+  "args": [
+    "--profile",
+    "acp@review"
+  ],
+  "environment": [
+    {
+      "name": "DSH_HOME",
+      "value": "%ROOT%/dsh"
+    },
+    {
+      "name": "FAKE_DIR",
+      "value": "%ROOT%/fake"
+    },
+    {
+      "name": "HOME",
+      "value": "%ROOT%/home"
+    },
+    {
+      "name": "NO_COLOR",
+      "value": "1"
+    },
+    {
+      "name": "PATH",
+      "value": "%ROOT%/bin"
+    }
+  ],
+  "profile": {
+    "name": "acp",
+    "dshHome": "%ROOT%/dsh"
+  },
+  "transport": "acp",
+  "createdAt": 1794009600,
+  "composition": {
+    "files": {}
+  }
+}

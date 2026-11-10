@@ -1,0 +1,44 @@
+{
+  "id": "0f1e2d3c-4b5a-4968-8776-655443322110",
+  "name": "broken",
+  "release": "%RELEASE%",
+  "cwd": "%ROOT%/work",
+  "args": [
+    "--profile",
+    "headless@broken",
+    "-p",
+    "summarise the work directory"
+  ],
+  "environment": [
+    {
+      "name": "DSH_HOME",
+      "value": "%ROOT%/dsh"
+    },
+    {
+      "name": "FAKE_DIR",
+      "value": "%ROOT%/fake"
+    },
+    {
+      "name": "HOME",
+      "value": "%ROOT%/home"
+    },
+    {
+      "name": "NO_COLOR",
+      "value": "1"
+    },
+    {
+      "name": "PATH",
+      "value": "%ROOT%/bin"
+    }
+  ],
+  "profile": {
+    "name": "headless",
+    "dshHome": "%ROOT%/dsh"
+  },
+  "transport": "none",
+  "createdAt": 1794009600,
+  "composition": {
+    "files": {}
+  },
+  "colour": "blue"
+}

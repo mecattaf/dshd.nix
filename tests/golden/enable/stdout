@@ -1,0 +1,3 @@
+ln -sfn /etc/systemd/user/dshd@.service %ROOT%/config/systemd/user/dshd.target.wants/dshd@review.service
+systemctl --user daemon-reload
+review: stopped(stub-dsh-golden), remedy: dshd start review

@@ -1,0 +1,2 @@
+dshd: stop: which instance? batch, broken, old, review, web-1
+  remedy: dshd ls

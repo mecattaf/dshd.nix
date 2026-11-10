@@ -1,0 +1,2 @@
+dshd: systemd user manager unavailable: systemctl --user show -p WorkingDirectory -- dshd@-.service failed with status 1: Failed to connect to bus: No medium found; XDG_RUNTIME_DIR is unset, so this shell has no user session
+  remedy: log in as this user (ssh, or machinectl shell USER@), so XDG_RUNTIME_DIR and the user bus exist

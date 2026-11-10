@@ -1,0 +1,13 @@
+# Configuration for https://github.com/crate-ci/typos
+
+[files]
+extend-exclude = [
+  "Cargo.lock",
+  "flake.lock",
+]
+
+[default.extend-identifiers]
+ACP = "ACP"
+acp = "acp"
+dsh = "dsh"
+dshd = "dshd"

@@ -1,0 +1,7 @@
+dshd.nix
+Copyright 2026 mecattaf and contributors
+
+This product includes software adapted from herdr-core
+(https://github.com/herdrdev/herdr-core, commit ce81486), Copyright the
+herdr-core contributors, licensed under the Apache License, Version 2.0.
+Each adapted file names its source and its changes in its first lines.

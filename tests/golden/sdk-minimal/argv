@@ -1,0 +1,8 @@
+run
+--text
+--name
+sdk-1
+--release
+%RELEASE%
+--
+sdk

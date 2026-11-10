@@ -1,0 +1,4 @@
+Created dshd instance scrub.
+systemctl --user start dshd@scrub.service
+scrub: running(stub-dsh-golden)
+Attach with: dshd attach scrub

@@ -1,0 +1,1 @@
+{"error":{"kind":"invalid-argument","message":"--json and --text exclude each other","hint":"dshd help"}}

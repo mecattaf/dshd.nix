@@ -1,0 +1,1 @@
+{"error":{"kind":"release-invalid","message":"release %ROOT%/work is not usable: it is not a store path (a directory directly under /nix/store)","hint":null}}

@@ -1,0 +1,1 @@
+{"error":{"kind":"unsupported-transport","message":"batch has transport none; it has nothing to attach to","hint":"dshd read --follow batch"}}

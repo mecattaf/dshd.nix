@@ -1,0 +1,1 @@
+{"error":{"kind":"systemctl-failed","message":"systemctl --user daemon-reload failed with status 1: Failed to reload daemon: Access denied","hint":null}}

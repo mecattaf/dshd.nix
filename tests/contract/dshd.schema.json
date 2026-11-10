@@ -1,0 +1,1249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dshd 0.1.0 machine contract",
+  "description": "The JSON objects dshd prints and the records it keeps. Output shapes only grow; records stay closed, since a reader refuses keys it does not know. tests/contract.rs holds the rules.",
+  "x-records": [
+    "instanceRecord",
+    "lastRunRecord"
+  ],
+  "$defs": {
+    "status": {
+      "type": "object",
+      "description": "dshd get; the body of every mutating verb's outcome",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "activeState": {
+          "type": "string"
+        },
+        "subState": {
+          "type": "string"
+        },
+        "result": {
+          "type": "string"
+        },
+        "mainPid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "restarts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invocationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "linger": {
+          "type": "boolean"
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/transport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "environmentNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "release": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/release"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/profile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "web": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/web"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "acp": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/probe"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastRun": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/lastRun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "remedy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        }
+      },
+      "required": [
+        "name",
+        "id",
+        "unit",
+        "state",
+        "activeState",
+        "subState",
+        "result",
+        "mainPid",
+        "restarts",
+        "invocationId",
+        "since",
+        "enabled",
+        "linger",
+        "transport",
+        "cwd",
+        "args",
+        "environmentNames",
+        "labels",
+        "release",
+        "profile",
+        "web",
+        "acp",
+        "lastRun",
+        "remedy",
+        "resources"
+      ],
+      "additionalProperties": false
+    },
+    "list": {
+      "type": "object",
+      "description": "dshd ls",
+      "properties": {
+        "instances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/listEntry"
+          }
+        },
+        "linger": {
+          "type": "boolean"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "instances",
+        "linger",
+        "warnings"
+      ],
+      "additionalProperties": false
+    },
+    "listEntry": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/transport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "release": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "releaseState": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/releaseState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "since": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "remedy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "state",
+        "transport",
+        "release",
+        "releaseState",
+        "enabled",
+        "since",
+        "remedy"
+      ],
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "object",
+      "description": "run, start, stop, restart, update, enable, disable, label, rm and wait; exitCode, signal and reason once run or wait followed a run",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/outcomeSlug"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "signal": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "activeState": {
+          "type": "string"
+        },
+        "subState": {
+          "type": "string"
+        },
+        "result": {
+          "type": "string"
+        },
+        "mainPid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "restarts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invocationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "linger": {
+          "type": "boolean"
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/transport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "environmentNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "release": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/release"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/profile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "web": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/web"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "acp": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/probe"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastRun": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/lastRun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "remedy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        }
+      },
+      "required": [
+        "outcome",
+        "warnings",
+        "name",
+        "id",
+        "unit",
+        "state",
+        "activeState",
+        "subState",
+        "result",
+        "mainPid",
+        "restarts",
+        "invocationId",
+        "since",
+        "enabled",
+        "linger",
+        "transport",
+        "cwd",
+        "args",
+        "environmentNames",
+        "labels",
+        "release",
+        "profile",
+        "web",
+        "acp",
+        "lastRun",
+        "remedy",
+        "resources"
+      ],
+      "additionalProperties": false
+    },
+    "read": {
+      "type": "object",
+      "description": "dshd read --json",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "invocationId": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "streams": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "stdout",
+              "stderr"
+            ]
+          }
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "invocationId",
+        "complete",
+        "streams",
+        "lines"
+      ],
+      "additionalProperties": false
+    },
+    "webConnection": {
+      "type": "object",
+      "description": "dshd attach --json on a web instance; url with --print-url",
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "urlFile": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "origin",
+        "port",
+        "urlFile"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "description": "every error, on stderr, in JSON mode",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/errorBody"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "errorBody": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/errorKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "message",
+        "hint"
+      ],
+      "additionalProperties": false
+    },
+    "errorKind": {
+      "type": "string",
+      "enum": [
+        "invalid-argument",
+        "invalid-name",
+        "needs-target",
+        "not-found",
+        "release-not-found",
+        "release-invalid",
+        "exists-different-recipe",
+        "instance-running",
+        "task-already-ran",
+        "unit-masked",
+        "not-running",
+        "attached-elsewhere",
+        "profile-link-exists",
+        "unsupported-transport",
+        "unsupported-profile",
+        "autostart-not-allowed",
+        "inconsistent-state",
+        "systemd-unavailable",
+        "tool-missing",
+        "template-missing",
+        "systemctl-failed",
+        "io",
+        "start-failed",
+        "stop-failed"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "running",
+        "starting",
+        "stopping",
+        "failed",
+        "stopped",
+        "interrupted",
+        "previous-boot",
+        "masked",
+        "orphaned",
+        "inconsistent",
+        "unknown"
+      ]
+    },
+    "outcomeSlug": {
+      "type": "string",
+      "enum": [
+        "created",
+        "started",
+        "already-running",
+        "stopped",
+        "already-stopped",
+        "restarted",
+        "updated",
+        "unchanged",
+        "enabled",
+        "already-enabled",
+        "disabled",
+        "already-disabled",
+        "removed",
+        "labelled",
+        "ended",
+        "still-running"
+      ]
+    },
+    "ending": {
+      "type": "string",
+      "enum": [
+        "stopped",
+        "stopped-without-intent",
+        "exited",
+        "failed",
+        "interrupted"
+      ]
+    },
+    "transport": {
+      "type": "string",
+      "enum": [
+        "web",
+        "acp",
+        "none"
+      ]
+    },
+    "releaseState": {
+      "type": "string",
+      "enum": [
+        "current",
+        "stale",
+        "outdated",
+        "missing"
+      ]
+    },
+    "release": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "current": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "booted": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/releaseState"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "current",
+        "booted",
+        "registry",
+        "state",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "profile": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "exposed": {
+          "type": "string"
+        },
+        "dshHome": {
+          "type": "string"
+        },
+        "linked": {
+          "type": "boolean"
+        },
+        "edited": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "exposed",
+        "dshHome",
+        "linked",
+        "edited"
+      ],
+      "additionalProperties": false
+    },
+    "web": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "port",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "probe": {
+      "type": "object",
+      "properties": {
+        "attached": {
+          "type": "boolean"
+        },
+        "attachedSince": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "initialized": {
+          "type": "boolean"
+        },
+        "heldSessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/heldSession"
+          }
+        },
+        "pendingPermissions": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "attached",
+        "attachedSince",
+        "initialized",
+        "heldSessions",
+        "pendingPermissions"
+      ],
+      "additionalProperties": false
+    },
+    "heldSession": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "bound": {
+          "type": "boolean"
+        },
+        "buffered": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sessionId",
+        "cwd",
+        "bound",
+        "buffered",
+        "dropped"
+      ],
+      "additionalProperties": false
+    },
+    "lastRun": {
+      "type": "object",
+      "properties": {
+        "startedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invocationId": {
+          "type": "string"
+        },
+        "ending": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ending"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "endedAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "serviceResult": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exitCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exitStatus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "child": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/childEnd"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thisBoot": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "startedAt",
+        "invocationId",
+        "ending",
+        "endedAt",
+        "serviceResult",
+        "exitCode",
+        "exitStatus",
+        "child",
+        "thisBoot"
+      ],
+      "additionalProperties": false
+    },
+    "childEnd": {
+      "type": "object",
+      "properties": {
+        "exitCode": {
+          "type": "integer"
+        },
+        "signal": {
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "instanceRecord": {
+      "type": "object",
+      "description": "instance.json, the recipe",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "cwd": {
+          "$ref": "#/$defs/osText"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/osText"
+          }
+        },
+        "environment": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/envVar"
+          }
+        },
+        "profile": {
+          "$ref": "#/$defs/profileRef"
+        },
+        "transport": {
+          "$ref": "#/$defs/transport"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "composition": {
+          "$ref": "#/$defs/composition"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "release",
+        "cwd",
+        "args",
+        "environment",
+        "profile",
+        "transport",
+        "createdAt",
+        "composition"
+      ],
+      "additionalProperties": false
+    },
+    "lastRunRecord": {
+      "type": "object",
+      "description": "last-run.json",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "releasePath": {
+          "$ref": "#/$defs/osText"
+        },
+        "bootId": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invocationId": {
+          "type": "string"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/runEnd"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "releasePath",
+        "bootId",
+        "startedAt",
+        "invocationId"
+      ],
+      "additionalProperties": false
+    },
+    "runEnd": {
+      "type": "object",
+      "properties": {
+        "endedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "serviceResult": {
+          "type": "string"
+        },
+        "exitCode": {
+          "type": "string"
+        },
+        "exitStatus": {
+          "type": "string"
+        },
+        "child": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/childEnd"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stopIntent": {
+          "type": "boolean"
+        },
+        "stopSignal": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "endedAt",
+        "serviceResult",
+        "exitCode",
+        "exitStatus",
+        "stopIntent"
+      ],
+      "additionalProperties": false
+    },
+    "osText": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
+            }
+          },
+          "required": [
+            "bytes"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "OS text: a string, or its bytes when it is not UTF-8"
+    },
+    "envVar": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/osText"
+        },
+        "value": {
+          "$ref": "#/$defs/osText"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "profileRef": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "dshHome": {
+          "$ref": "#/$defs/osText"
+        }
+      },
+      "required": [
+        "name",
+        "dshHome"
+      ],
+      "additionalProperties": false
+    },
+    "composition": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/fileStamp"
+          }
+        },
+        "patches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/patchStamp"
+          }
+        }
+      },
+      "required": [
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "fileStamp": {
+      "type": "object",
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mtimeSecs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mtimeNanos": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "size",
+        "mtimeSecs",
+        "mtimeNanos"
+      ],
+      "additionalProperties": false
+    },
+    "patchStamp": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/osText"
+        },
+        "stamp": {
+          "$ref": "#/$defs/fileStamp"
+        }
+      },
+      "required": [
+        "path",
+        "stamp"
+      ],
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpuUsageNSec": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "memoryCurrent": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "memoryPeak": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tasksCurrent": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ioReadBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ioWriteBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "cpuUsageNSec",
+        "memoryCurrent",
+        "memoryPeak",
+        "tasksCurrent",
+        "ioReadBytes",
+        "ioWriteBytes"
+      ]
+    }
+  }
+}

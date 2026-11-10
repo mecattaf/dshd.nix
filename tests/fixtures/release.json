@@ -1,0 +1,6 @@
+{
+  "environment": {
+    "DSH_PERMISSION_MODE": "danger-full-access"
+  },
+  "unsetEnvironment": []
+}

@@ -1,0 +1,6 @@
+run
+--json
+--release
+%ROOT%/work
+--
+web

@@ -1,0 +1,4 @@
+re-running the recorded task
+systemctl --user start dshd@batch.service
+batch: running(stub-dsh-golden)
+Follow with: dshd read --follow batch

@@ -1,0 +1,2 @@
+dshd: unknown flag --frob
+  remedy: dshd help

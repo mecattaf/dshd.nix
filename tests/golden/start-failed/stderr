@@ -1,0 +1,4 @@
+dshd: review did not start (failed, exit-code)
+  dshd-run: profile link %ROOT%/dsh/profiles/acp@review is missing
+  dshd-run: exiting 78
+  remedy: dshd read review

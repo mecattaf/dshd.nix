@@ -1,0 +1,2 @@
+dshd: run needs -- and the dsh arguments of the instance: dshd run -- web
+  remedy: dshd help

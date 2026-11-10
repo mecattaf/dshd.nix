@@ -1,0 +1,3 @@
+--user _SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef -q -o cat -n 5
+--user _SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef -q -o cat -n +1
+--user _SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef -f -n 0 -o cat

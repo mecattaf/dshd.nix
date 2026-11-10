@@ -1,0 +1,12 @@
+run
+--text
+--name
+web-1
+--release
+%RELEASE%
+--cwd
+%ROOT%/dsh
+--label
+agency=%ROOT%/work
+--
+web

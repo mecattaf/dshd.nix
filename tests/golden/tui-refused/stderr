@@ -1,0 +1,2 @@
+dshd: profile tui cannot be held by dshd: it has no app dshd can hold; it may need a terminal
+  remedy: run `dsh tui` in a terminal, or in a terminal multiplexer pane

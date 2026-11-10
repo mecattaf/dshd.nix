@@ -1,0 +1,4 @@
+Created dshd instance task.
+systemctl --user start dshd@task.service
+task: running(stub-dsh-golden)
+Follow with: dshd read --follow task

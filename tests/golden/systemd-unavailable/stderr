@@ -1,0 +1,2 @@
+dshd: systemd user manager unavailable: systemctl --user show -p WorkingDirectory -- dshd@-.service failed with status 1: Failed to connect to bus: No medium found
+  remedy: set users.users.<you>.linger = true in the NixOS configuration (or run loginctl enable-linger)

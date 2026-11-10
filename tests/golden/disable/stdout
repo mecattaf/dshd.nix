@@ -1,0 +1,2 @@
+systemctl --user disable dshd@review.service
+review: stopped(stub-dsh-golden), remedy: dshd start review

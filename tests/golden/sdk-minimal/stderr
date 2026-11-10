@@ -1,0 +1,2 @@
+dshd: profile sdk cannot be held by dshd: an SDK host speaks JSON-RPC on stdio to the client that starts it
+  remedy: run dsh sdk under that client

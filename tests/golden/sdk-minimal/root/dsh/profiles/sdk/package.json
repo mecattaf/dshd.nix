@@ -1,0 +1,11 @@
+{
+  "name": "sdk",
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-sdk-minimal"
+      ]
+    }
+  }
+}

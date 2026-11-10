@@ -1,0 +1,2 @@
+web-1: running(stub-dsh-golden)
+Attach with: dshd attach web-1

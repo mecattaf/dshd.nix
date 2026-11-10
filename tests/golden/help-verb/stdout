@@ -1,0 +1,16 @@
+Usage: dshd attach [--via web|acp] [--open | --print-url] [--takeover] [--json] NAME
+
+Connects to a running instance through its transport; it never starts one.
+web: prints the origin of the instance's web address. A browser that holds
+its cookie opens it as is; --print-url prints the full authenticated URL,
+the only output that holds the token.
+acp: runs the ACP relay client on this terminal's stdin and stdout. The
+relay has one controller; --takeover replaces the one attached.
+A headless instance has nothing to attach to; dshd read --follow NAME shows
+its output.
+
+  --via web|acp   the transport; default: the instance's own
+  --open          hand the full URL to xdg-open
+  --print-url     print the full authenticated URL
+  --takeover      replace the ACP controller that is attached
+  --json          web only: {"origin","port","urlFile"}, and "url" with --print-url

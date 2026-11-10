@@ -1,0 +1,3 @@
+dshd: web-1 exists with a different recipe:
+  cwd: stored %ROOT%/work, requested %ROOT%/dsh
+  remedy: dshd rm web-1

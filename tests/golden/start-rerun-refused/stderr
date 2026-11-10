@@ -1,0 +1,2 @@
+dshd: batch's headless task already ran; starting it again resubmits the recorded prompt
+  remedy: dshd start --rerun batch

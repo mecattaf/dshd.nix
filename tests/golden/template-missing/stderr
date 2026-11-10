@@ -1,0 +1,2 @@
+dshd: dshd@.service is not installed in the user manager
+  remedy: set dshd.enable = true and switch

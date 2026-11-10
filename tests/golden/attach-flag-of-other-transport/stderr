@@ -1,0 +1,1 @@
+{"error":{"kind":"invalid-argument","message":"attach over web does not take --takeover","hint":"dshd help"}}

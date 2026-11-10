@@ -1,0 +1,2 @@
+systemctl --user restart dshd@web-1.service
+web-1: running(stub-dsh-golden)

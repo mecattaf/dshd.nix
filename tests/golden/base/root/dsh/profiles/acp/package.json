@@ -1,0 +1,11 @@
+{
+  "name": "acp",
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-acp-app"
+      ]
+    }
+  }
+}

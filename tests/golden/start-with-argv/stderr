@@ -1,0 +1,2 @@
+dshd: start starts an existing instance by NAME; run creates one
+  remedy: dshd run --bg -- web 'two words'

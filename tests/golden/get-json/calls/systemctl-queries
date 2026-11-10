@@ -1,0 +1,3 @@
+--user show -p WorkingDirectory -- dshd@-.service
+--user show-environment
+--user show --timestamp=unix -p Id,LoadState,ActiveState,SubState,Result,MainPID,ExecMainStatus,NRestarts,ActiveEnterTimestamp,InactiveEnterTimestamp,InvocationID,WantedBy,CPUUsageNSec,MemoryCurrent,MemoryPeak,TasksCurrent,IOReadBytes,IOWriteBytes -- dshd@web-1.service

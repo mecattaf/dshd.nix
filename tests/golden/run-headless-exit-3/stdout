@@ -1,0 +1,4 @@
+dshd-run: run started
+summary: two files changed
+dsh: exiting 3
+dshd-run: run ended: exit-code

@@ -1,0 +1,5 @@
+batch: stopped(stub-dsh-golden), remedy: dshd start batch
+broken: inconsistent(stub-dsh-golden), remedy: dshd rm broken
+old: stopped(stub-dsh-golden, missing), remedy: dshd start old
+review: masked(stub-dsh-golden), remedy: systemctl --user unmask dshd@review.service
+web-1: running(stub-dsh-golden)

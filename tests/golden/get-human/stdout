@@ -1,0 +1,25 @@
+web-1: running(stub-dsh-golden)
+  id: 4b2d6a5e-1f3c-4e7a-9c0d-2a1b3c4d5e6f
+  unit: dshd@web-1.service (active/running, success)
+  since: 2026-11-07 00:00:10 UTC
+  main pid: 4242
+  invocation: 0123456789abcdef0123456789abcdef
+  restarts: 0
+  cpu ns: 1234567890
+  memory bytes: 1048576
+  memory peak bytes: 52428800
+  tasks: 12
+  enabled: no
+  transport: web
+  cwd: %ROOT%/work
+  args: --profile web@web-1
+  environment: DSH_HOME FAKE_DIR HOME NO_COLOR PATH
+  label agency: %ROOT%/work
+  release: %RELEASE%, stub-dsh-golden (current)
+    current: %RELEASE%
+    booted: %RELEASE%
+    registry: %RELEASE%
+  profile: web@web-1 from web in %ROOT%/dsh, linked
+  web: http://127.0.0.1:41234/?token=REDACTED (port 41234)
+  last run: stopped: 2026-11-07 00:00:10 UTC to 2026-11-07 01:00:10 UTC, success (exited 0), dsh exit 0, an earlier boot
+  linger: no

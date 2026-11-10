@@ -1,0 +1,42 @@
+dshd: durable native DSH sessions under the systemd user manager
+
+Usage: dshd VERB [FLAGS] [NAME] [-- DSH ARGUMENTS]
+
+Verbs:
+  run       create an instance from -- DSH ARGUMENTS and start it; a headless task runs in the foreground
+  start     start an instance again from its recorded recipe
+  stop      stop an instance; its recipe, release and profile copy stay
+  restart   restart an instance on its current release
+  update    point an instance at what its release name resolves to now
+  ls        every instance and its state; dshd alone does the same
+  get       everything dshd knows about one instance
+  read      print the journal of an instance's current or last run
+  wait      wait until an instance's run ends, and exit as dsh did
+  attach    print or open the web URL, or attach to the ACP relay; never starts
+  label     set or remove the labels of an instance
+  enable    start an instance with the user manager
+  disable   stop starting an instance with the user manager
+  rm        delete a stopped instance and its state
+  help      this page, or the page of one verb: dshd help VERB
+
+Flags come before --; everything after it goes to dsh unchanged.
+Results print as JSON when stdout is not a terminal or with --json; --text
+forces the human form. read, attach, help and a headless run in the
+foreground print text unless --json is given. Errors print as JSON by the
+first rule, as {"error":{"kind":...,"message":...,"hint":...}} on stderr.
+dshd VERB --help shows the flags of a verb; dshd --version prints the version.
+
+Exit codes:
+  0    success
+  1    operation failed: start-failed stop-failed release-invalid io inconsistent-state systemctl-failed
+  2    usage: invalid-argument invalid-name needs-target
+  3    not found: not-found release-not-found
+  4    conflict: exists-different-recipe instance-running task-already-ran unit-masked attached-elsewhere profile-link-exists
+  5    not running: not-running
+  6    unsupported: unsupported-transport unsupported-profile autostart-not-allowed
+  7    environment unavailable: systemd-unavailable tool-missing template-missing
+  124  still running at check-in (run, wait); the instance continues
+  N    run and wait in text mode: dsh's own exit code, or 128+S when signal S ended it
+Exit codes are stable once announced.
+
+Agent? Run: dshd --skill

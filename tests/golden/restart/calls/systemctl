@@ -1,0 +1,2 @@
+--user reset-failed dshd@web-1.service
+--user restart dshd@web-1.service

@@ -1,0 +1,43 @@
+{
+  "id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+  "name": "batch",
+  "release": "%RELEASE%",
+  "cwd": "%ROOT%/work",
+  "args": [
+    "--profile",
+    "headless@batch",
+    "-p",
+    "summarise the work directory"
+  ],
+  "environment": [
+    {
+      "name": "DSH_HOME",
+      "value": "%ROOT%/dsh"
+    },
+    {
+      "name": "FAKE_DIR",
+      "value": "%ROOT%/fake"
+    },
+    {
+      "name": "HOME",
+      "value": "%ROOT%/home"
+    },
+    {
+      "name": "NO_COLOR",
+      "value": "1"
+    },
+    {
+      "name": "PATH",
+      "value": "%ROOT%/bin"
+    }
+  ],
+  "profile": {
+    "name": "headless",
+    "dshHome": "%ROOT%/dsh"
+  },
+  "transport": "none",
+  "createdAt": 1794009600,
+  "composition": {
+    "files": {}
+  }
+}

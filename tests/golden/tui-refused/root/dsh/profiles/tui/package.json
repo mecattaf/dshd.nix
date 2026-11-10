@@ -1,0 +1,11 @@
+{
+  "name": "tui",
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@acme/dsh-tui"
+      ]
+    }
+  }
+}

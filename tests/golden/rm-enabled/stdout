@@ -1,0 +1,2 @@
+systemctl --user disable dshd@review.service
+Removed dshd instance review.

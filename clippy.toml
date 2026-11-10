@@ -1,0 +1,13 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = true
+large-error-threshold = 64
+too-many-lines-threshold = 80
+disallowed-macros = [
+  { path = "std::println", reason = "stdout goes through out::line, which maps a closed pipe to a quiet exit" },
+  { path = "std::print", reason = "stdout goes through out::write, which maps a closed pipe to a quiet exit" },
+  { path = "std::eprintln", reason = "stderr goes through out::error_line" },
+  { path = "std::eprint", reason = "stderr goes through out::error_line" },
+]

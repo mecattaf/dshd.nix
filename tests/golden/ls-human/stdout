@@ -1,0 +1,5 @@
+batch: stopped(stub-dsh-golden), remedy: dshd start batch
+broken: inconsistent(stub-dsh-golden), remedy: dshd rm broken
+old: stopped(stub-dsh-golden, missing), remedy: dshd start old
+review: stopped(stub-dsh-golden), remedy: dshd start review
+web-1: running(stub-dsh-golden)

@@ -1,0 +1,3 @@
+systemctl --user start dshd@review.service
+review: running(stub-dsh-golden)
+Attach with: dshd attach review

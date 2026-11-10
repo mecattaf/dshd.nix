@@ -1,0 +1,6 @@
+run
+--text
+--release
+%RELEASE%
+--
+tui

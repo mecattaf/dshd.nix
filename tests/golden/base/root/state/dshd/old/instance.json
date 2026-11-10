@@ -1,0 +1,41 @@
+{
+  "id": "6e5d4c3b-2a19-4f8e-9d7c-6b5a4f3e2d1c",
+  "name": "old",
+  "release": "default",
+  "cwd": "%ROOT%/work",
+  "args": [
+    "--profile",
+    "web@old"
+  ],
+  "environment": [
+    {
+      "name": "DSH_HOME",
+      "value": "%ROOT%/dsh"
+    },
+    {
+      "name": "FAKE_DIR",
+      "value": "%ROOT%/fake"
+    },
+    {
+      "name": "HOME",
+      "value": "%ROOT%/home"
+    },
+    {
+      "name": "NO_COLOR",
+      "value": "1"
+    },
+    {
+      "name": "PATH",
+      "value": "%ROOT%/bin"
+    }
+  ],
+  "profile": {
+    "name": "web",
+    "dshHome": "%ROOT%/dsh"
+  },
+  "transport": "web",
+  "createdAt": 1794009600,
+  "composition": {
+    "files": {}
+  }
+}

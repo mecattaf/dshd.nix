@@ -1,0 +1,2 @@
+dshd: batch has transport none, so it cannot be enabled: its task would run again at every start of the user manager
+  remedy: dshd start batch

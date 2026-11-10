@@ -1,0 +1,8 @@
+run
+--text
+--name
+web-3
+--release
+%RELEASE%
+--
+web

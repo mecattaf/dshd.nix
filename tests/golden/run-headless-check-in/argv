@@ -1,0 +1,12 @@
+run
+--timeout
+1
+--text
+--name
+task
+--release
+%RELEASE%
+--
+headless
+-p
+summarise the work directory

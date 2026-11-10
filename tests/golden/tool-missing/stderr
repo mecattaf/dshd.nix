@@ -1,0 +1,1 @@
+{"error":{"kind":"tool-missing","message":"journalctl not found on PATH","hint":"put journalctl on PATH"}}

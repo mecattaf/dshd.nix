@@ -1,0 +1,11 @@
+run
+--text
+--bg
+--name
+task
+--release
+%RELEASE%
+--
+headless
+-p
+summarise the work directory

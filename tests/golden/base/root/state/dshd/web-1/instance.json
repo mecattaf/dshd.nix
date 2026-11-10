@@ -1,0 +1,44 @@
+{
+  "id": "4b2d6a5e-1f3c-4e7a-9c0d-2a1b3c4d5e6f",
+  "name": "web-1",
+  "release": "%RELEASE%",
+  "cwd": "%ROOT%/work",
+  "args": [
+    "--profile",
+    "web@web-1"
+  ],
+  "environment": [
+    {
+      "name": "DSH_HOME",
+      "value": "%ROOT%/dsh"
+    },
+    {
+      "name": "FAKE_DIR",
+      "value": "%ROOT%/fake"
+    },
+    {
+      "name": "HOME",
+      "value": "%ROOT%/home"
+    },
+    {
+      "name": "NO_COLOR",
+      "value": "1"
+    },
+    {
+      "name": "PATH",
+      "value": "%ROOT%/bin"
+    }
+  ],
+  "profile": {
+    "name": "web",
+    "dshHome": "%ROOT%/dsh"
+  },
+  "transport": "web",
+  "labels": {
+    "agency": "%ROOT%/work"
+  },
+  "createdAt": 1794009600,
+  "composition": {
+    "files": {}
+  }
+}

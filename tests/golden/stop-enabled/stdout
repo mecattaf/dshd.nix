@@ -1,0 +1,3 @@
+systemctl --user stop dshd@review.service
+review: stopped(stub-dsh-golden), remedy: dshd start review
+review is enabled and starts again with the user manager or the next system switch; to keep it stopped: dshd disable review

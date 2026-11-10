@@ -1,0 +1,46 @@
+{
+  "id": "4b2d6a5e-1f3c-4e7a-9c0d-2a1b3c4d5e6f",
+  "name": "web-1",
+  "release": "default",
+  "cwd": "/srv/work/project",
+  "args": [
+    "--profile",
+    "web@web-1",
+    "web",
+    "--no-open",
+    "--port",
+    "0"
+  ],
+  "environment": [
+    {
+      "name": "HOME",
+      "value": "/srv/alice"
+    },
+    {
+      "name": "PATH",
+      "value": "/run/current-system/sw/bin"
+    },
+    {
+      "name": "TERM",
+      "value": "xterm-256color"
+    }
+  ],
+  "profile": {
+    "name": "web",
+    "dshHome": "/srv/alice/.dsh"
+  },
+  "transport": "web",
+  "labels": {
+    "agency": "/srv/work/project"
+  },
+  "createdAt": 1794009600,
+  "composition": {
+    "files": {
+      "config.yaml": {
+        "size": 812,
+        "mtimeSecs": 1794009599,
+        "mtimeNanos": 120000000
+      }
+    }
+  }
+}

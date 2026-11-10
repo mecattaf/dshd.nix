@@ -1,7 +1,8 @@
 //! Running external tools. Every `Command::new` in the crate goes through
 //! here, so `PATH` lookup, the C locale and the `ENOENT` to `tool-missing`
-//! mapping are decided once. The runner's spawn of `dsh` itself is the one
-//! other process start, in `runner`, because it is not a tool call.
+//! mapping are decided once. The runner's starts of `dsh` itself are the
+//! one other kind of process start, in `runner`, because they run with the
+//! instance's environment and nothing else.
 
 use std::ffi::{OsStr, OsString};
 use std::io;

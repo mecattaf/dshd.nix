@@ -4,12 +4,9 @@
   "release": "default",
   "cwd": "/srv/work/project",
   "args": [
-    "--profile",
-    "web@web-1",
     "web",
-    "--no-open",
     "--port",
-    "0"
+    "4100"
   ],
   "environment": [
     {
@@ -33,14 +30,5 @@
   "labels": {
     "agency": "/srv/work/project"
   },
-  "createdAt": 1794009600,
-  "composition": {
-    "files": {
-      "config.yaml": {
-        "size": 812,
-        "mtimeSecs": 1794009599,
-        "mtimeNanos": 120000000
-      }
-    }
-  }
+  "createdAt": 1794009600
 }

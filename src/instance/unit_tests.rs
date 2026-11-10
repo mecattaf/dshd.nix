@@ -1,10 +1,11 @@
 //! Unit tests for instance.
 
+use std::ffi::OsStr;
 use std::fs;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::PermissionsExt;
 
 use super::*;
-use crate::fsx::testing::{Scratch, any_store_path, fake_nix_store, install_script};
+use crate::fsx::testing::{Scratch, fake_nix_store, install_script, tree};
 use crate::record::ReleaseFile;
 
 const FIXTURE: &str = include_str!("../../tests/fixtures/instance.json");
@@ -22,18 +23,17 @@ fn release_at(path: PathBuf) -> Release {
     }
 }
 
-/// A request for a `web` instance named `name` whose DSH home, source
-/// profile, cwd and release live under `scratch`.
+/// A request for a `web` instance named `name` whose DSH home, profile,
+/// cwd and release live under `scratch`.
 fn request(scratch: &Path, name: &str) -> CreateRequest {
     let home = scratch.join("dsh");
-    let source = home.join("profiles/web");
-    fs::create_dir_all(&source).unwrap();
+    let profile = home.join("profiles/web");
+    fs::create_dir_all(&profile).unwrap();
     fs::write(
-        source.join("package.json"),
+        profile.join("package.json"),
         r#"{"dsh":{"profile":{"bundles":["dsh-web-app"]}}}"#,
     )
     .unwrap();
-    fs::write(source.join("cordis.yml"), "[]\n").unwrap();
     let cwd = scratch.join("work");
     fs::create_dir_all(&cwd).unwrap();
     CreateRequest {
@@ -41,11 +41,7 @@ fn request(scratch: &Path, name: &str) -> CreateRequest {
         release: release_at(scratch.join("release")),
         release_given: true,
         cwd,
-        args: vec![
-            "--profile".into(),
-            format!("web@{name}").into(),
-            "web".into(),
-        ],
+        args: vec!["web".into(), "--port".into(), "4100".into()],
         environment: vec![EnvVar {
             name: "TERM".into(),
             value: "xterm".into(),
@@ -58,19 +54,19 @@ fn request(scratch: &Path, name: &str) -> CreateRequest {
         },
         transport: Transport::Web,
         labels: BTreeMap::new(),
-        patches: Vec::new(),
     }
 }
 
-// catches: a second run of the same recipe making a new instance, or a different recipe overwriting one
+// catches: a second run of the same recipe making a new instance, a different recipe overwriting one, argv
+// not recorded as typed, or anything written in the DSH home or kept in the instance besides the record and roots
 #[test]
 fn create_twice_same_recipe_keeps_id() {
     let scratch = Scratch::new("instance-create");
     let root = StateRoot::new(scratch.path().join("state"));
     let (nix_store, log) = fake_nix_store(scratch.path());
     let request = request(scratch.path(), "web-a");
-    let store = any_store_path();
-    symlink(&store, scratch.path().join("dsh/profiles/web/store")).unwrap();
+    let home = scratch.path().join("dsh");
+    let before = tree(&home);
 
     let first = create(&root, &nix_store, request.clone()).unwrap();
     assert_eq!(first.dir.path(), root.instances_dir().join("web-a"));
@@ -90,19 +86,17 @@ fn create_twice_same_recipe_keeps_id() {
         fs::read_link(first.dir.booted()).unwrap(),
         request.release.path
     );
-    assert!(
-        first.dir.profile().join("package.json").is_file()
-            && !first.dir.profile().join("cordis.yml").exists()
-    );
-    let exposed = scratch.path().join("dsh/profiles/web@web-a");
-    assert_eq!(fs::read_link(&exposed).unwrap(), first.dir.profile());
+    let entries: Vec<_> = fsx::list_dir(first.dir.path())
+        .unwrap()
+        .into_iter()
+        .map(|(entry, _)| entry)
+        .collect();
+    assert_eq!(entries, ["booted", "current", "instance.json"]);
+    let args: Vec<&OsStr> = first.record.args.iter().map(OsText::as_os_str).collect();
+    assert_eq!(args, ["web", "--port", "4100"]);
     assert!(!root.instances_dir().join(".tmp-web-a").exists());
     let logged = fs::read_to_string(&log).unwrap();
-    for link in [
-        first.dir.current(),
-        first.dir.booted(),
-        first.dir.gcroots().join("1"),
-    ] {
+    for link in [first.dir.current(), first.dir.booted()] {
         assert!(
             logged.contains(&format!("--add-root {}\n", link.display())),
             "{} is rooted at its final path",
@@ -133,33 +127,27 @@ fn create_twice_same_recipe_keeps_id() {
         "a refused request changes nothing"
     );
 
-    remove(&first).unwrap();
-    assert!(!first.dir.path().exists() && fs::symlink_metadata(&exposed).is_err());
+    remove(&first.dir).unwrap();
+    assert!(!first.dir.path().exists());
     let recreated = create(&root, &nix_store, request).unwrap();
     assert_ne!(
         recreated.record.id, first.record.id,
         "a re-created name gets a new id"
     );
+    assert_eq!(tree(&home), before, "the DSH home is never written");
 }
 
-// catches: a generated name that collides with a profile link, or a failed creation leaving half an instance
+// catches: a generated name that is taken on disk, or a failed creation leaving half an instance
 #[test]
-fn create_generates_past_taken_links_and_rolls_back() {
+fn create_generates_past_taken_names_and_rolls_back() {
     let scratch = Scratch::new("instance-generate");
     let root = StateRoot::new(scratch.path().join("state"));
     let (nix_store, _) = fake_nix_store(scratch.path());
     let mut request = request(scratch.path(), "web-1");
-    fs::create_dir(scratch.path().join("dsh/profiles/web@web-1")).unwrap();
-    let home = scratch.path().join("dsh");
-    request.name = choose_name(&root, &[], &home, "web").unwrap();
+    create(&root, &nix_store, request.clone()).unwrap();
+    request.name = choose_name(&root, &[], "web").unwrap();
     let created = create(&root, &nix_store, request.clone()).unwrap();
     assert_eq!(created.name.as_str(), "web-2");
-
-    request.name = InstanceName::parse("web-1").unwrap();
-    assert!(matches!(
-        create(&root, &nix_store, request.clone()),
-        Err(Error::ProfileLinkExists(_))
-    ));
 
     let failing = scratch.path().join("failing-nix-store");
     install_script(
@@ -171,10 +159,10 @@ fn create_generates_past_taken_links_and_rolls_back() {
     assert!(matches!(refused, Err(Error::Tool(_))), "{refused:?}");
     assert_eq!(
         discover(&root).unwrap().names,
-        vec![created.name],
+        vec![InstanceName::parse("web-1").unwrap(), created.name],
         "no half instance is left"
     );
-    assert!(fs::symlink_metadata(scratch.path().join("dsh/profiles/web@web-3")).is_err());
+    assert!(!root.instances_dir().join(".tmp-web-3").exists());
 }
 
 // catches: an update that moves the booted release of a running instance
@@ -214,7 +202,6 @@ fn compare_recipe_reports_fields() {
         profile: stored.profile.clone(),
         transport: stored.transport,
         labels: stored.labels.clone(),
-        patches: Vec::new(),
     };
     assert_eq!(compare_recipe(&stored, &request), None);
     request.environment.push(EnvVar {

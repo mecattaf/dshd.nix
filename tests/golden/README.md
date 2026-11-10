@@ -62,8 +62,7 @@ FAKE_DIR=%ROOT%/fake
 ```
 
 The base holds five instances under `%ROOT%/state/dshd`, every one created
-from `%RELEASE%` in `%ROOT%/work` with the environment above, and their
-profile links in `%ROOT%/dsh/profiles`:
+from `%RELEASE%` in `%ROOT%/work` with the environment above:
 
 | Instance | Transport | Unit | Notes |
 |----------|-----------|------|-------|
@@ -73,10 +72,15 @@ profile links in `%ROOT%/dsh/profiles`:
 | `old`    | web  | stopped | release name `default`, absent from `/etc/dshd/releases` |
 | `broken` | none | never ran | `instance.json` has the unknown key `colour` |
 
-The source profiles `web`, `acp` and `headless` exist in the DSH home,
-their `package.json` listing the scoped bundles
-`["@deepseek-ai/dsh-base","@deepseek-ai/dsh-<app>"]`, so `run` never runs
-`dsh` itself. The sandbox is assumed to have no `/etc/dshd/releases`.
+The profiles `web`, `acp` and `headless` exist in the DSH home, their
+`package.json` listing the scoped bundles
+`["@deepseek-ai/dsh-base","@deepseek-ai/dsh-<app>"]`, so `run` runs `dsh`
+itself only for a profile that is missing, as `run-profile-missing` does.
+The sandbox is assumed to have no `/etc/dshd/releases`.
+
+Every case also checks that `%ROOT%/dsh` is the same tree after the run as
+before it: the same entries, modes, bytes and link targets. dshd only reads
+the DSH home.
 
 ## The fakes
 

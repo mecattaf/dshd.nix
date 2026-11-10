@@ -24,10 +24,13 @@
 #                   agent acting on its own instance); its status is logged
 #
 # Grammar honoured: a profile word as the bare first token, --profile V,
-# --profile=V, --patch V and --patch=V. --dump-default-config writes a
-# minimal profile under $DSH_HOME/profiles/<profile> and exits; -V and
-# --version print a version. Everything after the launcher flags is the app
-# and its arguments.
+# --profile=V, --patch V and --patch=V. -V and --version print a version.
+# Everything after the launcher flags is the app and its arguments.
+# --dump-default-config materialises a shipped profile as DSH does when it
+# has no package.json yet: it writes $DSH_HOME/profiles/<profile>/package.json
+# with the shipped bundles of web, acp, headless, sdk or sdk-minimal, and
+# exits; for any other name it prints DSH's refusal and exits 1. Booting
+# writes nothing under $DSH_HOME.
 #
 # The record of one invocation in DSH_STUB_LOG, in order:
 #   invocation PID
@@ -114,18 +117,21 @@ dsh_home() {
 
 dump_profile() {
 	dir=$(dsh_home)/profiles/$profile
+	[ ! -e "$dir/package.json" ] || return 0
 	base='"@deepseek-ai/dsh-base"'
 	case $profile in
 	web) bundles="$base,\"@deepseek-ai/dsh-web-app\"" ;;
 	acp) bundles="$base,\"@deepseek-ai/dsh-acp-app\"" ;;
-	sdk) bundles="$base,\"@deepseek-ai/dsh-sdk-app\"" ;;
 	headless) bundles="$base,\"@deepseek-ai/dsh-headless\"" ;;
-	*) bundles= ;;
+	sdk) bundles="$base,\"@deepseek-ai/dsh-sdk-app\"" ;;
+	sdk-minimal) bundles='"@deepseek-ai/dsh-sdk-minimal"' ;;
+	*)
+		printf "dsh: profile \"%s\" does not exist; create it with 'dsh plugin --profile %s add <package>'\n" "$profile" "$profile" >&2
+		exit 1
+		;;
 	esac
 	mkdir -p "$dir" || exit 1
 	printf '{"name":"%s","dsh":{"profile":{"bundles":[%s]}}}\n' "$profile" "$bundles" >"$dir/package.json"
-	printf '[]\n' >"$dir/cordis.patch.yml"
-	printf 'packages: []\n' >"$dir/pnpm-workspace.yaml"
 }
 
 mode_of_profile() {

@@ -1,4 +1,4 @@
 dshd: review did not start (failed, exit-code)
-  dshd-run: profile link %ROOT%/dsh/profiles/acp@review is missing
+  dshd-run: profile acp in %ROOT%/dsh now selects transport web, and review was created for acp: restore the profile, or remove the instance with dshd rm review and run it again
   dshd-run: exiting 78
   remedy: dshd read review

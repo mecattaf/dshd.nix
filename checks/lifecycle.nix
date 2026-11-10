@@ -4,10 +4,12 @@
 # catches: an instance that depends on the session that started it, a
 # changed argv or environment, a second process for one name, a restart
 # policy other than the runner's exit 75, work left behind by a stop or a
-# task end, writes outside the instance, an ending that misnames who
-# stopped it, a secret outside its 0600 record, nix needed at start, Ctrl+C
-# of a foreground run reaching the instance, output lost before the exit,
-# a self-restart that loses the instance, and linger hidden or changed.
+# task end, a profile that now selects another transport started anyway,
+# writes outside the instance or in the DSH home, an ending that misnames
+# who stopped it, a secret outside its 0600 record, nix needed at start,
+# Ctrl+C of a foreground run reaching the instance, output lost before the
+# exit, a self-restart that loses the instance, and linger hidden or
+# changed.
 { self, pkgs }:
 let
   vm = import ./vm-node.nix { inherit self pkgs; };
@@ -89,35 +91,42 @@ pkgs.testers.runNixOSTest {
         token = "a $HOME %s \" ' b\nc"
         run_bg(f"--name argv -- web {shlex.quote(token)}", "web")
         args = native_args(child("argv"))
-        assert token in args and any(arg.endswith("web@argv") for arg in args), args
+        assert args == ["web", token, "--no-open", "--port", "0"], args
+        assert get("argv")["args"] == ["web", token], "the record holds the argv as typed"
         receipt("argv", "P1.2")
 
     # catches: a second process for one name, already-running reported
     # before readiness, a second run of the same recipe spawning again (also
-    # from another session's environment), or a different recipe replacing
-    # the first
+    # from another session's environment), two starts booting dsh twice, or
+    # a different recipe replacing the first
     with subtest("P1.3 one unit one pid"):
         run(
             "for i in 1 2 3 4 5 6; do "
-            "env DSH_STUB_MODE=web dshd run --bg --json --name conc -- web >~/conc.$i 2>&1 & "
+            "env DSH_STUB_MODE=web DSH_STUB_LOG=$HOME/conc.log dshd run --bg --json --name conc -- web >~/conc.$i 2>&1 & "
             "done; wait"
         )
         outcomes = [json.loads(run(f"cat ~/conc.{i}")) for i in range(1, 7)]
         assert sorted(str(o.get("outcome")) for o in outcomes) == ["already-running"] * 5 + ["created"], outcomes
         assert {o["invocationId"] for o in outcomes} == {unit("conc", "InvocationID")}, outcomes
         assert all(o["state"] == "running" for o in outcomes), outcomes
-        dsh = machine.succeed("pgrep -u alice -f -- '--profile web@conc'").split()
-        assert dsh == [str(child("conc"))], dsh
+
+        def boots() -> str:
+            """How many times the stub booted for conc: one mode line each."""
+            return run("grep -c '^mode [0-9]* web$' ~/conc.log").strip()
+
+        assert boots() == "1" and logged("conc.log", "mode") == child("conc")
         dshd("stop conc")
         stopped = unit("conc", "InvocationID")
         run("dshd start --json conc >~/conc.a 2>&1 & dshd start --json conc >~/conc.b 2>&1 || true; wait")
         both = [json.loads(run(f"cat ~/conc.{k}")) for k in "ab"]
         fresh = unit("conc", "InvocationID")
         assert fresh != stopped and all(o["state"] == "running" and o["invocationId"] == fresh for o in both), both
+        assert boots() == "2", "two starts boot once"
         pid = child("conc")
         _, out = over_ssh("DSH_STUB_MODE=web dshd run --bg --json --name conc -- web")
         again = json.loads(out)
         assert again["outcome"] == "already-running" and (child("conc"), unit("conc", "InvocationID")) == (pid, fresh), again
+        assert boots() == "2"
         pid, invocation = child("argv"), unit("argv", "InvocationID")
         again = run_bg(f"--name argv -- web {shlex.quote(token)}", "web")
         assert again["outcome"] == "already-running", again
@@ -216,37 +225,58 @@ pkgs.testers.runNixOSTest {
         # AssertPathExists: a unit without an instance directory never runs.
         machine.fail(alice("systemctl --user start dshd@ghost.service"))
         assert unit("ghost", "AssertResult") == "no"
+        # The profile is live: one that now selects another transport is
+        # refused before dsh runs, never served as the recorded one.
+        drift = "~/.dsh/profiles/drift"
+
+        def drift_selects(bundles: list[str]) -> None:
+            """Writes the drift profile's package.json with `bundles`."""
+            manifest = json.dumps({"dsh": {"profile": {"bundles": bundles}}})
+            run(f"mkdir -p {drift} && printf '%s\\n' {shlex.quote(manifest)} > {drift}/package.json")
+
+        drift_selects(PROFILES["web"])
+        run_bg("--name drift -- drift", "web", env="DSH_STUB_LOG=$HOME/drift.log")
+        dshd("stop drift")
+        drift_selects(PROFILES["acp"])
+        code, err = attempt("dshd start --json drift")
+        assert code == 1 and "start-failed" in err and "now selects transport acp" in err, err
+        assert unit("drift", "ExecMainStatus") == "78" and unit("drift", "NRestarts") == "0"
+        assert run("grep -c '^mode ' ~/drift.log").strip() == "1", "dsh never ran for the refused start"
+        code, err = attempt("env DSH_STUB_MODE=web dshd run --bg --json --name drift -- drift")
+        assert code == 4 and "exists-different-recipe" in err and "transport" in err, err
         receipt("crashy", "P1.7")
 
-    # catches: creating or starting another instance, or running dsh by
-    # hand, writing into an existing instance's profile copy
-    with subtest("P2.2 no writes to A profile"):
-        copy = snapshot(f"{STATE}/web-1/profile")
+    # catches: creating, starting or restarting another instance of a
+    # profile writing into that profile, which a running instance boots from
+    with subtest("P2.2 no writes to profiles"):
+        profiles = snapshot("~alice/.dsh/profiles")
         run_bg("--name p22 -- web", "web")
-        run("DSH_STUB_MODE=headless /etc/dshd/releases/default/bin/dsh headless hello")
-        assert snapshot(f"{STATE}/web-1/profile") == copy
+        dshd("restart p22")
+        run_bg("--name p22-acp -- acp", "acp")
+        assert snapshot("~alice/.dsh/profiles") == profiles
         receipt("web-1", "P2.2")
 
-    # catches: the lifecycle writing into the DSH home beyond the profile link, or
-    # rm leaving a link, a GC root, a drop-in or a wants link behind
+    # catches: the lifecycle writing anything in the DSH home, such as a
+    # profile link, a copy or a stamp, at any verb; or rm leaving a GC root,
+    # a drop-in or a wants link behind. The stub writes nothing there when
+    # it boots, so the home must stay as it was, entry for entry.
     with subtest("P2.4 dsh home untouched"):
         home = "~alice/.dsh"
-        run("mkdir -p ~/.dsh/sessions ~/.dsh/storages/web@p24"
-            " && printf x > ~/.dsh/sessions/web@p24.jsonl"
-            " && printf '{}' > ~/.dsh/storages/web@p24/state.json"
+        run("mkdir -p ~/.dsh/sessions ~/.dsh/storages/web"
+            " && printf x > ~/.dsh/sessions/p24.jsonl"
+            " && printf '{}' > ~/.dsh/storages/web/state.json"
             " && printf 'k: v\\n' > ~/.dsh/.credentials.yaml")
         before = snapshot(home)
         run_bg("--name p24 -- web", "web")
-        machine.succeed(f"test -L {home}/profiles/web@p24")
+        assert snapshot(home) == before, "run"
         dshd("enable p24")
         machine.succeed("test -L ~alice/.config/systemd/user/dshd.target.wants/dshd@p24.service")
         assert "dshd@p24.service" in run("systemctl --user show --property=Wants --value dshd.target")
         receipt("p24", "P2.4")
-        for verb in ("stop", "start", "stop", "rm"):
+        for verb in ("restart", "stop", "start", "stop", "rm"):
             dshd(f"{verb} p24")
-        assert snapshot(home) == before
+            assert snapshot(home) == before, verb
         machine.fail(f"test -e {STATE}/p24")
-        machine.fail(f"test -L {home}/profiles/web@p24")
         # Nix ignores dangling indirect links; query the collector's live roots.
         machine.fail("nix-store --gc --print-roots | grep -F '/dshd/p24/'")
         machine.fail("find ~alice/.config/systemd/user -name 'dshd@p24*' | grep -q .")
@@ -265,13 +295,19 @@ pkgs.testers.runNixOSTest {
         assert get("done")["lastRun"]["ending"] == "exited"
         receipt("why", "P2.5")
 
-    # catches: DSH_HOME of the starting shell not reaching dsh or get
+    # catches: DSH_HOME of the starting shell not reaching dsh or get, or a
+    # profile that does not exist yet made by dshd rather than by dsh: in a
+    # fresh home, only the manifest dsh materialises appears
     with subtest("P2.6 dsh home selection"):
         work = machine.succeed("echo ~alice/.dsh-work").strip()
         run_bg("--name homed -- web", "web", env=f"DSH_HOME={work}")
         assert environ(child("homed"))["DSH_HOME"] == work
-        assert get("homed")["profile"]["dshHome"] == work
-        machine.succeed(f"test -L {work}/profiles/web@homed")
+        assert get("homed")["profile"] == {"name": "web", "dshHome": work}
+        made = machine.succeed(f"find {work} -mindepth 1 -printf '%P\\n' | sort").split()
+        assert made == ["profiles", "profiles/web", "profiles/web/package.json"], made
+        materialised = json.loads(machine.succeed(f"cat {work}/profiles/web/package.json"))
+        assert materialised["dsh"]["profile"]["bundles"] == ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"]
+        assert native_args(child("homed")) == ["web", "--no-open", "--port", "0"]
         receipt("homed", "P2.6")
 
     # catches: dsh started outside the task directory, the label lost, or
@@ -299,7 +335,7 @@ pkgs.testers.runNixOSTest {
             run("dshd attach web-1")
         assert snapshot(f"{STATE}/web-1") == before
         entries = set(run(f"ls -A {STATE}/web-1").splitlines())
-        assert entries <= {"instance.json", "last-run.json", "current", "booted", "profile", "web-port", "lock", "gcroots"}, entries
+        assert entries <= {"instance.json", "last-run.json", "current", "booted", "web-port", "lock"}, entries
         # NixOS's default DefaultIOAccounting=yes gives the user manager the io
         # controller too, so every counter is live.
         resources = get("web-1")["resources"]

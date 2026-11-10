@@ -28,7 +28,7 @@ pub mod launch;
 pub mod name;
 /// The only writer of stdout and stderr.
 pub mod out;
-/// Profiles: the source in a DSH home, the instance's copy and its link.
+/// Profiles: the transport a live DSH profile selects, read, never written.
 pub mod profile;
 /// The on-disk records and their serde shapes.
 pub mod record;

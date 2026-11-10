@@ -6,7 +6,7 @@
 use std::ffi::OsString;
 use std::fs::{self, DirBuilder, File, FileType, Metadata, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,11 +22,6 @@ use crate::record::to_json;
 const PRIVATE_DIR_MODE: u32 = 0o700;
 /// Mode of a lock file. It holds no data, only the advisory lock.
 const LOCK_MODE: u32 = 0o600;
-/// Permission bits a copied file keeps; setuid, setgid and sticky are dropped.
-const PERMISSION_BITS: u32 = 0o777;
-/// Owner write, added to every copied file so a copy of a read-only source
-/// (a store path) stays writable for DSH and the user.
-const OWNER_WRITE: u32 = 0o200;
 
 /// Distinguishes the temporary names of concurrent writers in one process;
 /// the process id distinguishes processes.
@@ -211,34 +206,14 @@ pub(crate) fn list_dir(path: &Path) -> Result<Vec<(OsString, FileType)>, Error> 
     Ok(listed)
 }
 
-/// Copies a regular file to a new `dest`, keeping its permission bits plus
-/// owner write. The kernel copies the bytes (`copy_file_range`), which
-/// shares extents on file systems that can.
-pub(crate) fn copy_file(source: &Path, dest: &Path) -> Result<(), Error> {
-    let mut from = File::open(source).map_err(|e| Error::io("open", source, e))?;
-    let source_mode = from
-        .metadata()
-        .map_err(|e| Error::io("stat", source, e))?
-        .permissions()
-        .mode();
-    let mut to = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode((source_mode & PERMISSION_BITS) | OWNER_WRITE)
-        .open(dest)
-        .map_err(|e| Error::io("create", dest, e))?;
-    io::copy(&mut from, &mut to).map_err(|e| Error::io("copy", source, e))?;
-    to.sync_all().map_err(|e| Error::io("sync", dest, e))
-}
-
 /// Creates the symlink `link` → `target`; an existing `link` is an
 /// `AlreadyExists` I/O error, never replaced.
-pub(crate) fn symlink(target: &Path, link: &Path) -> Result<(), Error> {
+fn symlink(target: &Path, link: &Path) -> Result<(), Error> {
     std::os::unix::fs::symlink(target, link).map_err(|e| Error::io("create link", link, e))
 }
 
 /// Syncs a populated directory before its parent makes it visible.
-pub(crate) fn sync_directory(path: &Path) -> Result<(), Error> {
+fn sync_directory(path: &Path) -> Result<(), Error> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .map_err(|e| Error::io("sync", path, e))
@@ -310,12 +285,13 @@ fn discard_temp(temp: &Path) {
 
 #[cfg(test)]
 pub(crate) mod testing {
-    //! Scratch directories and a fake `nix-store` for the unit tests of the
-    //! state modules.
+    //! Scratch directories, a fake `nix-store` and a tree listing for the
+    //! unit tests of the state modules.
 
+    use std::collections::BTreeMap;
     use std::fs;
     use std::io;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use std::process::{self, Command};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -401,18 +377,47 @@ printf '%s\n' "$root"
         panic!("{} stayed busy", path.display());
     }
 
-    /// Some directory directly under `/nix/store` (its canonical path is
-    /// itself), for tests of store link classification.
-    pub(crate) fn any_store_path() -> PathBuf {
-        fs::read_dir("/nix/store")
-            .unwrap()
-            .map(Result::unwrap)
-            .find(|entry| {
-                entry.file_type().unwrap().is_dir()
-                    && entry.file_name().as_encoded_bytes().first() != Some(&b'.')
-            })
-            .unwrap()
-            .path()
+    /// `root` and every entry under it, links not followed, each with what
+    /// a write changes: its kind, mode, inode, modification and change
+    /// times, and its bytes or a link's target. So a file rewritten with the
+    /// same bytes, or replaced by a rename, differs, and the times of a
+    /// directory show an entry that was added and removed again. An absent
+    /// `root` has no entries.
+    pub(crate) fn tree(root: &Path) -> BTreeMap<PathBuf, String> {
+        let mut entries = BTreeMap::new();
+        match fs::symlink_metadata(root) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            found => add(root, &found.unwrap(), &mut entries),
+        }
+        entries
+    }
+
+    fn add(path: &Path, metadata: &fs::Metadata, entries: &mut BTreeMap<PathBuf, String>) {
+        let stamp = format!(
+            "mode {:o}, inode {}, modified {}.{:09}, changed {}.{:09}",
+            metadata.mode(),
+            metadata.ino(),
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.ctime(),
+            metadata.ctime_nsec()
+        );
+        let described = if metadata.is_dir() {
+            for entry in fs::read_dir(path).unwrap() {
+                let entry = entry.unwrap().path();
+                add(&entry, &fs::symlink_metadata(&entry).unwrap(), entries);
+            }
+            format!("directory, {stamp}")
+        } else if metadata.is_symlink() {
+            format!(
+                "link to {}, {stamp}",
+                fs::read_link(path).unwrap().display()
+            )
+        } else {
+            let bytes = fs::read(path).unwrap();
+            format!("file, {stamp}: {}", String::from_utf8_lossy(&bytes))
+        };
+        entries.insert(path.to_owned(), described);
     }
 }
 

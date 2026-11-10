@@ -107,7 +107,7 @@ fn argv_and_environment_reach_dsh_verbatim_without_closed_list_names() -> TestRe
         ("NOTIFY_SOCKET", "/nonexistent/notify"),
         ("XDG_SESSION_ID", "7"),
         ("HC_SCOPE", "scope-planted"),
-        ("DSH_PROFILE", "web@elsewhere"),
+        ("DSH_PROFILE", "web"),
     ];
     let mut planted = excluded.to_vec();
     planted.push((CANARY_NAME, CANARY));
@@ -124,10 +124,7 @@ fn argv_and_environment_reach_dsh_verbatim_without_closed_list_names() -> TestRe
     assert_secret_absent(&instance, &ended.journal)?;
 
     let log = instance.stub_log()?;
-    assert_eq!(
-        first_argv(&log)?,
-        ["--profile", "headless@verbatim", "-p", prompt]
-    );
+    assert_eq!(first_argv(&log)?, ["headless", "-p", prompt]);
     assert!(
         log.contains(&format!("\ncwd {}\n", instance.path("work").display())),
         "dsh runs in the recorded cwd:\n{log}"

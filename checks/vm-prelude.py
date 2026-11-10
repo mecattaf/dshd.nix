@@ -170,7 +170,7 @@ def receipt(name: str, proof: str, report: Any = None) -> None:
         "id": report["id"],
         "invocationId": report["invocationId"],
         "release": (report["release"] or {}).get("booted"),
-        "profile": (report["profile"] or {}).get("exposed"),
+        "profile": (report["profile"] or {}).get("name"),
         "transport": report["transport"],
         "result": "pass",
     }
@@ -201,7 +201,6 @@ def setup() -> None:
         manifest = json.dumps({"dsh": {"profile": {"bundles": bundles}}})
         target = f"~/.dsh/profiles/{profile}"
         run(f"mkdir -p {target} && printf '%s\\n' {shlex.quote(manifest)} > {target}/package.json")
-        run(f"printf '[]\\n' > {target}/cordis.patch.yml")
     machine.succeed(
         "install -d -m 0700 /root/.ssh",
         "ssh-keygen -q -t ed25519 -N '' -f /root/.ssh/id_ed25519",

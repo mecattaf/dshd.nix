@@ -4,8 +4,7 @@
   "release": "default",
   "cwd": "%ROOT%/work",
   "args": [
-    "--profile",
-    "web@old"
+    "web"
   ],
   "environment": [
     {
@@ -34,8 +33,5 @@
     "dshHome": "%ROOT%/dsh"
   },
   "transport": "web",
-  "createdAt": 1794009600,
-  "composition": {
-    "files": {}
-  }
+  "createdAt": 1794009600
 }

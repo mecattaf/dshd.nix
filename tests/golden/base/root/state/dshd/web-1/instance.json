@@ -4,8 +4,7 @@
   "release": "%RELEASE%",
   "cwd": "%ROOT%/work",
   "args": [
-    "--profile",
-    "web@web-1"
+    "web"
   ],
   "environment": [
     {
@@ -37,8 +36,5 @@
   "labels": {
     "agency": "%ROOT%/work"
   },
-  "createdAt": 1794009600,
-  "composition": {
-    "files": {}
-  }
+  "createdAt": 1794009600
 }

@@ -72,7 +72,6 @@ pkgs.testers.runNixOSTest {
     unmanaged = unmanaged_dsh()
     bystanders = fixtures()
     r1 = get("a")["release"]["booted"]
-    copy = snapshot(f"{STATE}/a/profile")
     args = native_args(child("a"))
 
     def live_roots(name: str, target: str, links: tuple[str, ...] = ("current", "booted")) -> None:
@@ -87,10 +86,9 @@ pkgs.testers.runNixOSTest {
     live_roots("g2", GC_PROBE)
 
     # catches: a switch, a reload or a reexec of the user manager restarting A,
-    # or a new release or profile edit reaching it
+    # or a new release reaching it
     with subtest("P2.1 release isolation"):
         before = identity("a")
-        run("printf '# edited: true\\n' >> ~/.dsh/profiles/web/cordis.patch.yml")
         lines = switch("r2")
         for name in ("a", "g", "g2"):
             assert touched(lines, name) == [], lines
@@ -102,9 +100,7 @@ pkgs.testers.runNixOSTest {
         run_bg("--name b -- web", "web")
         a, b = get("a")["release"], get("b")["release"]
         assert a["current"] == a["booted"] == r1 and b["booted"] != r1, (a, b)
-        assert snapshot(f"{STATE}/a/profile") == copy and native_args(child("a")) == args
-        machine.succeed(f"grep -q edited {STATE}/b/profile/cordis.patch.yml")
-        machine.fail(f"grep -q edited {STATE}/a/profile/cordis.patch.yml")
+        assert native_args(child("a")) == args
         receipt("a", "P2.1")
         receipt("b", "P2.1")
 

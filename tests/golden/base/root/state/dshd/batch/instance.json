@@ -4,8 +4,7 @@
   "release": "%RELEASE%",
   "cwd": "%ROOT%/work",
   "args": [
-    "--profile",
-    "headless@batch",
+    "headless",
     "-p",
     "summarise the work directory"
   ],
@@ -36,8 +35,5 @@
     "dshHome": "%ROOT%/dsh"
   },
   "transport": "none",
-  "createdAt": 1794009600,
-  "composition": {
-    "files": {}
-  }
+  "createdAt": 1794009600
 }

@@ -13,7 +13,7 @@ Usage: dshd VERB [FLAGS] [NAME] [-- DSH ARGUMENTS]
 Verbs:
   run       create an instance from -- DSH ARGUMENTS and start it; a headless task runs in the foreground
   start     start an instance again from its recorded recipe
-  stop      stop an instance; its recipe, release and profile copy stay
+  stop      stop an instance; its recipe and release stay
   restart   restart an instance on its current release
   update    point an instance at what its release name resolves to now
   ls        every instance and its state; dshd alone does the same
@@ -39,7 +39,7 @@ Exit codes:
   1    operation failed: start-failed stop-failed release-invalid io inconsistent-state systemctl-failed
   2    usage: invalid-argument invalid-name needs-target
   3    not found: not-found release-not-found
-  4    conflict: exists-different-recipe instance-running task-already-ran unit-masked attached-elsewhere profile-link-exists
+  4    conflict: exists-different-recipe instance-running task-already-ran unit-masked attached-elsewhere
   5    not running: not-running
   6    unsupported: unsupported-transport unsupported-profile autostart-not-allowed
   7    environment unavailable: systemd-unavailable tool-missing template-missing
@@ -63,6 +63,10 @@ recipe is refused. The recipe is the directory, the arguments, the profile
 and the transport, and the release when --release is given. An instance
 that runs already is reported, not restarted.
 
+dsh runs the profile as it is in its DSH home at every start. dshd only
+reads the profile's bundles, which fix the transport at creation; a shipped
+profile that does not exist yet is created by dsh itself.
+
 A web or acp instance, or any instance with --bg, is left running and run
 returns. A headless instance runs in the foreground: its output is printed
 until dsh exits, and dshd exits as dsh did, also when stdout is not a
@@ -84,7 +88,8 @@ const START: &str = r"Usage: dshd start [--rerun] [--json | --text] NAME
 
 Starts NAME again from its recorded recipe and its current release, and
 waits until it runs. An instance that runs already is reported, not
-restarted. dshd run creates instances; start never does.
+restarted. dshd run creates instances; start never does. A start fails
+when the profile now selects another transport than the recorded one.
 
 A headless instance whose task already ran is refused, since starting it
 submits the recorded prompt again; --rerun does that on purpose.
@@ -95,8 +100,8 @@ submits the recorded prompt again; --rerun does that on purpose.
 const STOP: &str = r"Usage: dshd stop [--json | --text] NAME
 
 Stops dshd@NAME and every process it started, tool children included. The
-recipe, the release roots, the profile copy and DSH's own sessions stay;
-dshd start NAME starts the instance again.";
+recipe, the release roots and DSH's own sessions stay; dshd start NAME
+starts the instance again.";
 
 const RESTART: &str = r"Usage: dshd restart [--json | --text] NAME
 
@@ -126,7 +131,7 @@ one is needed. dshd alone does the same. As JSON, one object:
 
 const GET: &str = r"Usage: dshd get [--json | --text] NAME
 
-The unit, the recorded recipe, the release links, the profile copy, the web
+The unit, the recorded recipe and profile, the release links, the web
 address or the ACP relay, how the last run ended, and whether linger is on.";
 
 const READ: &str = r#"Usage: dshd read [-n LINES] [-f] [--json] NAME
@@ -188,9 +193,9 @@ Removes dshd@NAME from dshd.target. Stops nothing.";
 
 const RM: &str = r"Usage: dshd rm [--json | --text] NAME
 
-Deletes a stopped instance: its state directory, its profile copy and the
-profile link in the DSH home, and its release roots, which the next garbage
-collection may then free. DSH's own sessions stay.";
+Deletes a stopped instance: its state directory and its release roots,
+which the next garbage collection may then free. The profile and DSH's own
+sessions stay.";
 
 const HELP: &str = r"Usage: dshd help [VERB]
 
@@ -239,7 +244,6 @@ fn page(word: Word) -> String {
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::path::PathBuf;
 
     use super::*;
     use crate::error::{RecipeDifference, StartFailure, ToolFailure, UnheldApp};
@@ -286,7 +290,6 @@ mod tests {
             Error::UnitMasked(name()),
             Error::NotRunning(name()),
             Error::AttachedElsewhere(name()),
-            Error::ProfileLinkExists(PathBuf::from("/srv/p")),
             Error::UnsupportedTransport {
                 name: name(),
                 transport: "none",
@@ -401,7 +404,6 @@ mod tests {
         let pointers = [
             "invalid-name",
             "release-not-found",
-            "profile-link-exists",
             "tool-missing",
             "template-missing",
         ];

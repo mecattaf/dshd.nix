@@ -2,8 +2,8 @@
 //! its pinned port, readiness that is never reported for a start that
 //! cannot be attached, the ACP relay's handshake and probe, the exit status
 //! table end to end, the refusals before anything is spawned, `poststop`
-//! and the stop it records, and the argv, environment and signal mask dsh
-//! receives.
+//! and the stop it records, the argv, environment and signal mask dsh
+//! receives, and the live profile at every start.
 
 mod common;
 
@@ -11,6 +11,9 @@ mod common;
 mod launch;
 #[path = "runner/poststop.rs"]
 mod poststop;
+#[path = "runner/profile.rs"]
+mod profile;
+mod tree;
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};

@@ -1,5 +1,7 @@
 //! Filesystem and lock identity regressions.
 
+use std::os::unix::fs::PermissionsExt;
+
 use super::testing::Scratch;
 use super::*;
 

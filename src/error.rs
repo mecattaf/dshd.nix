@@ -64,8 +64,6 @@ pub enum Error {
     NotRunning(String),
     /// Another controller holds the ACP relay.
     AttachedElsewhere(String),
-    /// `$DSH_HOME/profiles/<p>@<name>` exists and is not dshd's link.
-    ProfileLinkExists(PathBuf),
     /// The instance's transport does not support the requested connection.
     UnsupportedTransport {
         /// The instance.
@@ -75,7 +73,7 @@ pub enum Error {
     },
     /// The profile's app is not one dshd can hold in a unit.
     UnsupportedProfile {
-        /// The source profile.
+        /// The profile.
         profile: String,
         /// What kind of app it has.
         app: UnheldApp,
@@ -185,7 +183,6 @@ impl Error {
             Self::UnitMasked(_) => "unit-masked",
             Self::NotRunning(_) => "not-running",
             Self::AttachedElsewhere(_) => "attached-elsewhere",
-            Self::ProfileLinkExists(_) => "profile-link-exists",
             Self::UnsupportedTransport { .. } => "unsupported-transport",
             Self::UnsupportedProfile { .. } => "unsupported-profile",
             Self::AutostartNotAllowed(_) => "autostart-not-allowed",
@@ -219,8 +216,7 @@ impl Error {
             | Self::InstanceRunning(_)
             | Self::TaskAlreadyRan(_)
             | Self::UnitMasked(_)
-            | Self::AttachedElsewhere(_)
-            | Self::ProfileLinkExists(_) => 4,
+            | Self::AttachedElsewhere(_) => 4,
             Self::NotRunning(_) => 5,
             Self::UnsupportedTransport { .. }
             | Self::UnsupportedProfile { .. }
@@ -255,7 +251,6 @@ impl Error {
             Self::UnitMasked(unit) => Some(format!("systemctl --user unmask {unit}")),
             Self::NotRunning(name) | Self::AutostartNotAllowed(name) => Some(format!("dshd start {name}")),
             Self::AttachedElsewhere(name) => Some(format!("dshd attach --takeover {name}")),
-            Self::ProfileLinkExists(path) => Some(format!("move or delete {}", path.display())),
             Self::UnsupportedTransport { name, transport: "none" } => Some(format!("dshd read --follow {name}")),
             Self::UnsupportedTransport { name, .. } => Some(format!("dshd attach {name}")),
             Self::UnsupportedProfile { profile, app: UnheldApp::Sdk } => Some(format!("run dsh {profile} under that client")),
@@ -317,9 +312,6 @@ impl fmt::Display for Error {
             Self::UnitMasked(unit) => write!(f, "{unit} is masked, so systemd will not start it"),
             Self::NotRunning(name) => write!(f, "{name} is not running"),
             Self::AttachedElsewhere(name) => write!(f, "{name} already has a controller attached"),
-            Self::ProfileLinkExists(path) => {
-                write!(f, "{} exists and is not managed by dshd", path.display())
-            }
             Self::UnsupportedTransport {
                 name,
                 transport: "none",

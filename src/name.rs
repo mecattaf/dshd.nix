@@ -1,6 +1,6 @@
 //! Instance names and everything derived from one: the unit name, the state
-//! directory, the runtime directory, the exposed profile name. One name, one
-//! place to derive from it, so no two modules can disagree about a path.
+//! directory and the runtime directory. One name, one place to derive from
+//! it, so no two modules can disagree about a path.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -28,10 +28,6 @@ const CURRENT_LINK: &str = "current";
 const BOOTED_LINK: &str = "booted";
 /// Pinned web port for a web instance, written on first start.
 const WEB_PORT_FILE: &str = "web-port";
-/// The instance's own copy of its profile directory.
-const PROFILE_DIR: &str = "profile";
-/// Indirect GC roots for store paths the profile copy points at.
-const GCROOTS_DIR: &str = "gcroots";
 /// Advisory lock taken by the CLI around create/update/remove.
 pub const LOCK_FILE: &str = "lock";
 
@@ -103,11 +99,6 @@ impl InstanceName {
     /// `dshd@<name>.service`.
     pub fn unit(&self) -> String {
         format!("dshd@{}.service", self.0)
-    }
-
-    /// `<profile>@<name>`: the profile name DSH sees for this instance.
-    pub fn exposed_profile(&self, profile: &str) -> String {
-        format!("{profile}@{}", self.0)
     }
 
     /// Parses a loaded unit name back into an instance name, or `None` for
@@ -190,16 +181,6 @@ impl InstanceDir {
     /// The pinned web port file.
     pub fn web_port(&self) -> PathBuf {
         self.0.join(WEB_PORT_FILE)
-    }
-
-    /// The instance's profile copy.
-    pub fn profile(&self) -> PathBuf {
-        self.0.join(PROFILE_DIR)
-    }
-
-    /// The directory of indirect GC roots for store paths under `profile/`.
-    pub fn gcroots(&self) -> PathBuf {
-        self.0.join(GCROOTS_DIR)
     }
 
     /// The advisory lock file.
@@ -325,7 +306,6 @@ mod tests {
             Some(name.clone())
         );
         assert_eq!(InstanceName::from_unit("dshd.target"), None);
-        assert_eq!(name.exposed_profile("web"), "web@web-1");
     }
 
     // catches: a state or runtime path that moved away from where the unit and the runner look

@@ -3,18 +3,17 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::Error;
-use crate::name::InstanceName;
 use crate::record::{EnvVar, OsText, ReleaseFile};
 
 fn argv(tokens: &[&str]) -> Vec<OsString> {
     tokens.iter().map(OsString::from).collect()
 }
 
-fn scan(tokens: &[OsString]) -> Result<super::Scanned, Error> {
-    super::scan_native_argv(tokens, &InstanceName::parse("review")?)
+fn selected(tokens: &[&str]) -> Result<String, Error> {
+    super::selected_profile(&argv(tokens))
 }
 
 fn pairs(items: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
@@ -32,73 +31,57 @@ fn var(name: &str, value: &str) -> EnvVar {
     }
 }
 
-// catches: a rewrite that touches anything but the profile selection, or loses a patch token or a prompt byte (P1.2)
+// catches: a profile missed behind a patch flag or an inline value, or one taken from the app's arguments (P1.2)
 #[test]
-fn scan_rewrites_profile_only() -> Result<(), Error> {
-    let bare = super::scan_native_argv(
-        &argv(&["web", "--port", "4100"]),
-        &InstanceName::parse("review")?,
-    )?;
-    assert_eq!((bare.profile.as_str(), bare.app), ("web", None));
-    assert_eq!(
-        bare.args,
-        argv(&["--profile", "web@review", "--port", "4100"])
+fn selects_the_profile_by_the_launcher_grammar() -> Result<(), Error> {
+    assert_eq!(selected(&["web", "--port", "4100"])?, "web");
+    assert!(
+        selected(&["web", "--patch", "a.yml", "--profile", "x"]).is_err(),
+        "a --profile after a patch is still the launcher's, so a second selection"
     );
-
-    let flags = scan(&argv(&[
-        "--patch",
-        "a.yml",
-        "--profile=acp",
-        "--patch=b.yml",
-        "acp",
-        "-V",
-        "--",
-        "--profile",
-        "x",
-    ]))?;
-    assert_eq!(flags.profile, "acp");
-    assert_eq!(flags.app.as_deref(), Some("acp"));
     assert_eq!(
-        flags.patches,
-        vec![PathBuf::from("a.yml"), PathBuf::from("b.yml")]
-    );
-    let expected = [
-        "--profile",
-        "acp@review",
-        "--patch",
-        "a.yml",
-        "--patch=b.yml",
+        selected(&[
+            "--patch",
+            "a.yml",
+            "--profile=acp",
+            "--patch=b.yml",
+            "acp",
+            "-V",
+            "--",
+            "--profile",
+            "x",
+        ])?,
         "acp",
-        "-V",
-        "--",
-        "--profile",
-        "x",
-    ];
-    assert_eq!(flags.args, argv(&expected));
-
+        "the launcher flags end at the first other token"
+    );
+    assert_eq!(
+        selected(&["--profile", "headless", "run", "--fast"])?,
+        "headless"
+    );
+    assert_eq!(selected(&["tui", "--resume", "--version"])?, "tui");
+    assert_eq!(
+        selected(&["web@other"])?,
+        "web@other",
+        "dsh's own name rules apply"
+    );
+    assert_eq!(
+        selected(&["desktop"])?,
+        "desktop",
+        "dsh refuses it itself, in its own words"
+    );
+    let raw = OsString::from_vec(vec![b'p', 0xff]);
     let prompt = OsString::from("a $PATH %s \" ' b\nc");
-    let raw = OsString::from_vec(vec![b'p', 0xff, b'\n']);
-    let verbatim = scan(&[
-        OsString::from("--profile"),
-        OsString::from("headless"),
-        prompt.clone(),
-        raw.clone(),
-    ])?;
     assert_eq!(
-        verbatim.args,
-        vec![
-            OsString::from("--profile"),
-            OsString::from("headless@review"),
-            prompt,
-            raw
-        ]
+        super::selected_profile(&[OsString::from("--profile=web"), prompt, raw])?,
+        "web"
     );
     Ok(())
 }
 
-// catches: an argv accepted that would manage plugins, rebuild the copy, print and exit, select two profiles or escape the `@` rewrite (P1.2)
+// catches: an argv accepted that would manage plugins, recreate the profile at every start, print and exit, select two
+// profiles, or name a profile outside the DSH home's profiles directory (P1.2)
 #[test]
-fn scan_refusals() -> Result<(), Error> {
+fn selection_refusals() -> Result<(), Error> {
     let refused: &[&[&str]] = &[
         &[],
         &["--patch", "a.yml"],
@@ -107,6 +90,7 @@ fn scan_refusals() -> Result<(), Error> {
         &["web", "--profile", "acp"],
         &["--profile", "a", "--profile=b"],
         &["--from-default-profile", "web"],
+        &["rescue", "--from-default-profile=web"],
         &["web", "--dump-config"],
         &["--dump-default-config=x"],
         &["-V"],
@@ -117,24 +101,22 @@ fn scan_refusals() -> Result<(), Error> {
         &["."],
         &[".."],
         &["a/b"],
-        &["web@other"],
-        &["Desktop"],
-        &["--profile", "DESKTOP"],
+        &["--profile", "../web"],
     ];
     for tokens in refused {
-        let scanned = scan(&argv(tokens));
+        let found = selected(tokens);
         assert!(
-            matches!(scanned, Err(Error::InvalidArgument(_))),
-            "{tokens:?} gave {scanned:?}"
+            matches!(found, Err(Error::InvalidArgument(_))),
+            "{tokens:?} gave {found:?}"
         );
     }
     let raw = [OsString::from_vec(vec![0xff])];
     assert!(matches!(
-        super::scan_native_argv(&raw, &InstanceName::parse("review")?),
+        super::selected_profile(&raw),
         Err(Error::InvalidArgument(_))
     ));
     assert_eq!(
-        scan(&argv(&["--profile", "plugin"]))?.profile,
+        selected(&["--profile", "plugin"])?,
         "plugin",
         "only the first word is reserved"
     );
@@ -144,20 +126,17 @@ fn scan_refusals() -> Result<(), Error> {
 // catches: an injected flag overriding or duplicating the user's --no-open, --port or --public-url, or landing after `--` (P3.1)
 #[test]
 fn inject_web_args_respects_user_flags() {
-    let mut first = argv(&["--profile", "web@review", "web"]);
+    let mut first = argv(&["web"]);
     assert!(super::inject_web_args(&mut first, None));
-    assert_eq!(
-        first,
-        argv(&["--profile", "web@review", "web", "--no-open", "--port", "0"])
-    );
+    assert_eq!(first, argv(&["web", "--no-open", "--port", "0"]));
 
-    let mut pinned = argv(&["--profile", "web@review", "--", "--port"]);
+    let mut pinned = argv(&["--profile", "web", "--", "--port"]);
     assert!(super::inject_web_args(&mut pinned, Some(4100)));
     assert_eq!(
         pinned,
         argv(&[
             "--profile",
-            "web@review",
+            "web",
             "--no-open",
             "--port",
             "4100",
@@ -174,7 +153,7 @@ fn inject_web_args_respects_user_flags() {
         (&["--no-open"], true),
     ];
     for (user, port_injected) in given {
-        let mut args = argv(&["--profile", "web@review"]);
+        let mut args = argv(&["web"]);
         args.extend(argv(user));
         let before = args.clone();
         assert_eq!(
@@ -295,11 +274,11 @@ fn compose_order() {
 }
 
 // catches: another supervisor's identity carried into a record, so its crash sweep ends our processes, or
-// DSH_PROFILE persisted by a start from inside an instance; and either kept from an older record
+// DSH_PROFILE persisted by a run from inside an instance's shell; and either kept from an older record
 #[test]
 fn supervisor_and_profile_identity_never_survive() {
     let env = pairs(&[
-        ("DSH_PROFILE", "web@web-1"),
+        ("DSH_PROFILE", "web"),
         ("HC_RUNTIME", "/r/hc"),
         ("HC_SCOPE", "scope-1"),
         ("HC_TERMINAL_ID", "t-1"),
@@ -310,7 +289,7 @@ fn supervisor_and_profile_identity_never_survive() {
         vec![var("KEEP", "k")]
     );
     let older = [
-        var("DSH_PROFILE", "web@web-1"),
+        var("DSH_PROFILE", "web"),
         var("HC_SCOPE", "scope-1"),
         var("KEEP", "k"),
     ];
@@ -364,20 +343,6 @@ fn resolve_dsh_home_forms() {
         Path::new("/w/project/~other"),
         "only `~` and `~/` expand"
     );
-}
-
-// catches: web flags or anything else added to the argv of an ACP or headless instance, such as an instance started under an agency label (P3.4)
-#[test]
-fn no_injection_for_agency_label() -> Result<(), Error> {
-    let labelled = super::scan_native_argv(&argv(&["acp"]), &InstanceName::parse("review")?)?;
-    assert_eq!(labelled.args, argv(&["--profile", "acp@review"]));
-    let headless = scan(&argv(&["--profile", "headless", "run", "--fast"]))?;
-    assert_eq!(
-        headless.args,
-        argv(&["--profile", "headless@review", "run", "--fast"])
-    );
-    assert_eq!(headless.app.as_deref(), Some("run"));
-    Ok(())
 }
 
 // catches: SS03 another unit's state/credential, trigger, monitor or service-result metadata is captured or replayed

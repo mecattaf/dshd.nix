@@ -5,7 +5,7 @@ Usage: dshd VERB [FLAGS] [NAME] [-- DSH ARGUMENTS]
 Verbs:
   run       create an instance from -- DSH ARGUMENTS and start it; a headless task runs in the foreground
   start     start an instance again from its recorded recipe
-  stop      stop an instance; its recipe, release and profile copy stay
+  stop      stop an instance; its recipe and release stay
   restart   restart an instance on its current release
   update    point an instance at what its release name resolves to now
   ls        every instance and its state; dshd alone does the same
@@ -31,7 +31,7 @@ Exit codes:
   1    operation failed: start-failed stop-failed release-invalid io inconsistent-state systemctl-failed
   2    usage: invalid-argument invalid-name needs-target
   3    not found: not-found release-not-found
-  4    conflict: exists-different-recipe instance-running task-already-ran unit-masked attached-elsewhere profile-link-exists
+  4    conflict: exists-different-recipe instance-running task-already-ran unit-masked attached-elsewhere
   5    not running: not-running
   6    unsupported: unsupported-transport unsupported-profile autostart-not-allowed
   7    environment unavailable: systemd-unavailable tool-missing template-missing

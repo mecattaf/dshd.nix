@@ -2,19 +2,16 @@
 
 use super::*;
 
-// catches: generation ignores a loaded unit or an exposed link even though that name cannot be created
+// catches: generation ignores a loaded unit whose state directory is gone, so its name is reused under it
 #[test]
-fn production_name_selection_unites_disk_loaded_and_profile_names() {
+fn production_name_selection_unites_disk_and_loaded_names() {
     let scratch = Scratch::new("instance-name-union");
     let root = StateRoot::new(scratch.path().join("state"));
-    let home = scratch.path().join("dsh");
     fs::create_dir_all(root.instance(&InstanceName::parse("web-1").unwrap()).path()).unwrap();
-    fs::create_dir_all(home.join("profiles/web@web-3")).unwrap();
-    fs::create_dir_all(home.join("profiles/acp@web-4")).unwrap();
     let loaded = vec![InstanceName::parse("web-2").unwrap()];
     assert_eq!(
-        choose_name(&root, &loaded, &home, "web").unwrap().as_str(),
-        "web-4"
+        choose_name(&root, &loaded, "web").unwrap().as_str(),
+        "web-3"
     );
 }
 

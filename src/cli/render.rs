@@ -167,20 +167,7 @@ fn release_lines(page: &mut Page, release: &ReleaseReport) {
 }
 
 fn profile_text(profile: &ProfileReport) -> String {
-    let linked = if profile.linked {
-        "linked"
-    } else {
-        "not linked"
-    };
-    let edited = if profile.edited {
-        ", edited since it was copied"
-    } else {
-        ""
-    };
-    format!(
-        "{} from {} in {}, {linked}{edited}",
-        profile.exposed, profile.name, profile.dsh_home
-    )
+    format!("{} in {}", profile.name, profile.dsh_home)
 }
 
 fn acp_lines(page: &mut Page, acp: &ProbeLine) {
@@ -437,7 +424,7 @@ mod tests {
     #[test]
     fn shell_quoting() {
         assert_eq!(quoted("--profile"), "--profile");
-        assert_eq!(quoted("web@web-1"), "web@web-1");
+        assert_eq!(quoted("web@home"), "web@home");
         assert_eq!(quoted(""), "''");
         assert_eq!(quoted("two words"), "'two words'");
         assert_eq!(quoted("it's"), r"'it'\''s'");

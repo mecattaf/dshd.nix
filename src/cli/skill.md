@@ -128,6 +128,10 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   with `dshd get web-1`.
 - A masked unit (`systemctl --user mask`) is never unmasked by dshd; `start`
   refuses with `unit-masked` and names the command.
+- The profile is DSH's own: every start runs it as it is in the DSH home
+  now. A profile changed to another transport makes the next start fail
+  with `start-failed`; `dshd rm web-1` and a new `run` recreate the
+  instance for it.
 
 ## JSON shapes
 
@@ -154,7 +158,7 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
 | 1 | start-failed, stop-failed, release-invalid, io, inconsistent-state, systemctl-failed |
 | 2 | invalid-argument, invalid-name, needs-target |
 | 3 | not-found, release-not-found |
-| 4 | exists-different-recipe, instance-running, task-already-ran, unit-masked, attached-elsewhere, profile-link-exists |
+| 4 | exists-different-recipe, instance-running, task-already-ran, unit-masked, attached-elsewhere |
 | 5 | not-running |
 | 6 | unsupported-transport, unsupported-profile, autostart-not-allowed |
 | 7 | systemd-unavailable, tool-missing, template-missing |

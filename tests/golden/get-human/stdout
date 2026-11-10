@@ -12,14 +12,14 @@ web-1: running(stub-dsh-golden)
   enabled: no
   transport: web
   cwd: %ROOT%/work
-  args: --profile web@web-1
+  args: web
   environment: DSH_HOME FAKE_DIR HOME NO_COLOR PATH
   label agency: %ROOT%/work
   release: %RELEASE%, stub-dsh-golden (current)
     current: %RELEASE%
     booted: %RELEASE%
     registry: %RELEASE%
-  profile: web@web-1 from web in %ROOT%/dsh, linked
+  profile: web in %ROOT%/dsh
   web: http://127.0.0.1:41234/?token=REDACTED (port 41234)
   last run: stopped: 2026-11-07 00:00:10 UTC to 2026-11-07 01:00:10 UTC, success (exited 0), dsh exit 0, an earlier boot
   linger: no

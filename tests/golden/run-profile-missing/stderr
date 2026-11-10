@@ -1,0 +1,1 @@
+dshd: dsh --profile mine --dump-default-config failed with status 1: dsh: profile "mine" does not exist; create it with 'dsh plugin --profile mine add <package>'

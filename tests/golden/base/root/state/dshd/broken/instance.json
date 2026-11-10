@@ -4,8 +4,7 @@
   "release": "%RELEASE%",
   "cwd": "%ROOT%/work",
   "args": [
-    "--profile",
-    "headless@broken",
+    "headless",
     "-p",
     "summarise the work directory"
   ],
@@ -37,8 +36,5 @@
   },
   "transport": "none",
   "createdAt": 1794009600,
-  "composition": {
-    "files": {}
-  },
   "colour": "blue"
 }

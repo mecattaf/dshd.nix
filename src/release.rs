@@ -14,8 +14,7 @@ use crate::name::{
 use crate::record::ReleaseFile;
 use crate::tool::Tool;
 
-/// The Nix store. Release paths and rooted profile targets live directly
-/// under it.
+/// The Nix store. Release paths live directly under it.
 const STORE_DIR: &str = "/nix/store";
 /// Length of the hash part of a store path's name.
 const STORE_HASH_LEN: usize = 32;
@@ -215,7 +214,7 @@ pub fn closure_difference(nix: &Tool, old: &Path, new: &Path) -> Result<Vec<Stri
 }
 
 /// The top-level store path that `path` lies in, when it lies in the store.
-pub(crate) fn store_path_of(path: &Path) -> Option<PathBuf> {
+fn store_path_of(path: &Path) -> Option<PathBuf> {
     let Ok(inside) = path.strip_prefix(STORE_DIR) else {
         return None;
     };

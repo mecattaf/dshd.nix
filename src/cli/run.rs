@@ -1,8 +1,9 @@
-//! `dshd run ... -- DSH ARGUMENTS`: resolve the recipe (release, cwd, argv
-//! scan and rewrite, environment capture, profile copy, transport), create
-//! the instance or match the stored one, and start it. A web or acp
-//! instance, or any with `--bg`, is left running; a headless one runs in
-//! the foreground until its task ends or the timeout passes.
+//! `dshd run ... -- DSH ARGUMENTS`: resolve the recipe (release, cwd, the
+//! argv as typed and the profile it selects, environment capture, the
+//! transport the live profile selects), create the instance or match the
+//! stored one, and start it. A web or acp instance, or any with `--bg`, is
+//! left running; a headless one runs in the foreground until its task ends
+//! or the timeout passes.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -17,16 +18,12 @@ use crate::error::Error;
 use crate::fsx::{self, Lock};
 use crate::instance::{self, CreateRequest, Instance};
 use crate::launch;
-use crate::name::{self, InstanceName};
+use crate::name;
 use crate::out;
 use crate::profile;
 use crate::record::{OsText, ProfileRef, Transport};
 use crate::release;
 use crate::tool::Tool;
-
-/// The name the first argv scan rewrites the profile with while the real
-/// name is not known yet; only the profile that scan finds is kept.
-const SCAN_NAME: &str = "scan";
 
 /// Runs the verb. The exit code is 0, or for a foreground headless run in
 /// text form dsh's own status or 124 at the check-in.
@@ -80,8 +77,8 @@ fn foreground(ctx: &Context, instance: &Instance, shown: Shown, timeout: u64) ->
 /// Resolves the recipe from argv and creates the instance, or matches the
 /// stored recipe of an existing one, whose labels are then set. Returns
 /// the instance lock, the instance as loaded under it, and whether it was
-/// created now. The root lock covers the profile initialisation, the name
-/// choice and the creation, never a systemctl call.
+/// created now. The root lock covers dsh materialising a missing profile,
+/// the name choice and the creation, never a systemctl call.
 fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool), Error> {
     let release_given = args.release.is_some();
     let release = release::resolve(Path::new(name::RELEASES_DIR), args.release.as_deref())?;
@@ -91,11 +88,7 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool), Error
     };
     let client: BTreeMap<OsString, OsString> = ctx.environment.iter().cloned().collect();
     let dsh_home = launch::resolve_dsh_home(&client, &ctx.home, &cwd);
-    let first = match &args.name {
-        Some(name) => name.clone(),
-        None => InstanceName::parse(SCAN_NAME)?,
-    };
-    let scanned = launch::scan_native_argv(&args.argv, &first)?;
+    let selected = launch::selected_profile(&args.argv)?;
     let dsh = Tool::at("dsh", release.path.join(name::RELEASE_DSH));
     let loaded = if args.name.is_none() {
         ctx.systemctl.list_loaded_instances()?
@@ -103,16 +96,15 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool), Error
         Vec::new()
     };
     let root_lock = instance::lock_root(&ctx.state_root)?;
-    let source = profile::initialise_source(&dsh, &dsh_home, &scanned.profile)?;
-    let transport = profile::detect_transport(&source, &scanned.profile)?;
-    let (name, scanned) = if let Some(name) = &args.name {
-        (name.clone(), scanned)
-    } else {
-        let name = instance::choose_name(&ctx.state_root, &loaded, &dsh_home, &scanned.profile)?;
-        let rescanned = launch::scan_native_argv(&args.argv, &name)?;
-        (name, rescanned)
+    let mut materialise = dsh.command();
+    materialise
+        .env(launch::DSH_HOME, &dsh_home)
+        .current_dir(&cwd);
+    let transport = profile::transport(&dsh, materialise, &dsh_home, &selected)?;
+    let name = match &args.name {
+        Some(name) => name.clone(),
+        None => instance::choose_name(&ctx.state_root, &loaded, &selected)?,
     };
-    let native = scanned.args;
     let created = fsx::kind(ctx.state_root.instance(&name).path())?.is_none();
     let environment =
         launch::capture_environment(&ctx.environment, &release.file.unset_environment);
@@ -127,16 +119,15 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool), Error
         release,
         release_given,
         cwd,
-        args: native,
+        args: args.argv.clone(),
         environment,
         profile: ProfileRef {
-            name: scanned.profile,
+            name: selected,
             dsh_home: OsText::new(dsh_home.into_os_string()),
             unrecognized: serde_json::Map::new(),
         },
         transport,
         labels,
-        patches: scanned.patches,
     };
     instance::create(&ctx.state_root, &ctx.nix_store, request)?;
     let (lock, mut instance) = instance::lock_loaded(&ctx.state_root, &name)?;

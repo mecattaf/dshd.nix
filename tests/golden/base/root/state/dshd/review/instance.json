@@ -4,8 +4,7 @@
   "release": "%RELEASE%",
   "cwd": "%ROOT%/work",
   "args": [
-    "--profile",
-    "acp@review"
+    "acp"
   ],
   "environment": [
     {
@@ -34,8 +33,5 @@
     "dshHome": "%ROOT%/dsh"
   },
   "transport": "acp",
-  "createdAt": 1794009600,
-  "composition": {
-    "files": {}
-  }
+  "createdAt": 1794009600
 }

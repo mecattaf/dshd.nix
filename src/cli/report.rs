@@ -74,20 +74,15 @@ pub struct ReleaseReport {
     pub label: String,
 }
 
-/// The `profile` block of a status object.
+/// The `profile` block of a status object: the profile dsh runs, live
+/// from its DSH home.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileReport {
-    /// Source profile name.
+    /// The profile name.
     pub name: String,
-    /// `<p>@<name>`, as DSH sees it.
-    pub exposed: String,
-    /// The DSH home the link lives in.
+    /// The DSH home the profile lives in.
     pub dsh_home: String,
-    /// The link exists and points at the instance's copy.
-    pub linked: bool,
-    /// The copy changed since the record was written.
-    pub edited: bool,
 }
 
 /// The `web` block of a status object.

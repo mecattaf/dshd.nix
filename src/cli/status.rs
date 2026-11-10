@@ -21,7 +21,6 @@ use crate::fsx;
 use crate::instance::{self, Instance};
 use crate::name::{self, InstanceName, RuntimeDir};
 use crate::out;
-use crate::profile;
 use crate::record::{LastRun, OsText, Transport};
 use crate::relay::{self, protocol::ProbeLine};
 use crate::release::{self, ReleaseState};
@@ -188,7 +187,7 @@ pub(super) fn gather(
     report.last_run = last_run.map(|run| last_run_report(run, boot, unit_up(facts)));
     let mut probe_failure = None;
     if let Some(instance) = &instance {
-        fill_recipe(&mut report, instance, &mut findings);
+        fill_recipe(&mut report, instance);
         let running = facts.active_state == ActiveState::Active;
         match instance.record.transport {
             Transport::Web => report.web = Some(web_report(ctx, instance, running, &mut findings)),
@@ -420,7 +419,7 @@ fn since(facts: &UnitFacts) -> Option<u64> {
 
 /// The recorded recipe: identity, transport, cwd, argv, environment names,
 /// labels and the profile block.
-fn fill_recipe(report: &mut StatusReport, instance: &Instance, findings: &mut Findings) {
+fn fill_recipe(report: &mut StatusReport, instance: &Instance) {
     let record = &instance.record;
     report.id = Some(record.id.clone());
     report.transport = Some(record.transport);
@@ -432,35 +431,10 @@ fn fill_recipe(report: &mut StatusReport, instance: &Instance, findings: &mut Fi
         .map(|var| var.name.display())
         .collect();
     report.labels = record.labels.clone();
-    report.profile = Some(profile_report(instance, findings));
-}
-
-fn profile_report(instance: &Instance, findings: &mut Findings) -> ProfileReport {
-    let source = &instance.record.profile;
-    let dsh_home = Path::new(source.dsh_home.as_os_str());
-    let exposed = instance.name.exposed_profile(&source.name);
-    let copy = instance.dir.profile();
-    let linked = match profile::verify_link(dsh_home, &exposed, &copy) {
-        Ok(linked) => linked,
-        Err(error) => {
-            findings.note(error.to_string());
-            false
-        }
-    };
-    let edited = match profile::edited_since(&copy, &instance.record.composition) {
-        Ok(edited) => edited,
-        Err(error) => {
-            findings.note(error.to_string());
-            true
-        }
-    };
-    ProfileReport {
-        name: source.name.clone(),
-        exposed,
-        dsh_home: source.dsh_home.display(),
-        linked,
-        edited,
-    }
+    report.profile = Some(ProfileReport {
+        name: record.profile.name.clone(),
+        dsh_home: record.profile.dsh_home.display(),
+    });
 }
 
 /// The pinned port, and the announced address with its secret redacted

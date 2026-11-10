@@ -68,11 +68,6 @@ fn state_cases() -> Vec<(Error, &'static str, u8)> {
             4,
         ),
         (
-            Error::ProfileLinkExists(PathBuf::from("/profile")),
-            "profile-link-exists",
-            4,
-        ),
-        (
             Error::UnsupportedTransport {
                 name: "x".into(),
                 transport: "none",
@@ -186,7 +181,6 @@ fn known_variant(error: &Error) {
         | Error::UnitMasked(_)
         | Error::NotRunning(_)
         | Error::AttachedElsewhere(_)
-        | Error::ProfileLinkExists(_)
         | Error::UnsupportedTransport { .. }
         | Error::UnsupportedProfile { .. }
         | Error::AutostartNotAllowed(_)

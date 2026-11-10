@@ -5,12 +5,12 @@ broken: inconsistent(stub-dsh-golden), remedy: dshd rm broken
   enabled: no
   transport: none
   cwd: %ROOT%/work
-  args: --profile headless@broken -p 'summarise the work directory'
+  args: headless -p 'summarise the work directory'
   environment: DSH_HOME FAKE_DIR HOME NO_COLOR PATH
   release: %RELEASE%, stub-dsh-golden (current)
     current: %RELEASE%
     booted: %RELEASE%
     registry: %RELEASE%
-  profile: headless@broken from headless in %ROOT%/dsh, linked
+  profile: headless in %ROOT%/dsh
   problem: instance.json has unrecognized keys (colour): a newer dshd wrote it
   linger: no

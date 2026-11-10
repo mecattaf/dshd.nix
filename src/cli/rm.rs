@@ -1,7 +1,8 @@
 //! `dshd rm NAME`: under the root and instance locks, refuses a running instance,
 //! reports the status observed just before deletion, clears the unit's
-//! failed state and its `dshd.target` link, removes the profile link and
-//! the tree.
+//! failed state and its `dshd.target` link, and removes the tree. A record
+//! a newer dshd wrote is removed too, since `rm` is the remedy dshd prints
+//! for it: removal reads nothing from the record.
 
 use super::lifecycle;
 use super::status::{self, Shown};
@@ -23,10 +24,6 @@ pub(super) fn run(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
         Some(_) => Some(instance::lock(&dir)?),
         None => None,
     };
-    // A record a newer dshd wrote is removed too, since `rm` is the remedy
-    // dshd prints for it: removal reads only the profile link, which it
-    // unlinks only while it points at this instance's own copy.
-    let loaded = instance::load(&ctx.state_root, name);
     let unit = name.unit();
     let facts = ctx.systemctl.show(&unit)?;
     if !matches!(
@@ -46,18 +43,7 @@ pub(super) fn run(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
             .before
             .push(lifecycle::echoed(ctx, &["disable", &unit]));
     }
-    match loaded {
-        Ok(instance) => instance::remove(&instance)?,
-        Err(Error::NotFound(_)) => {}
-        Err(Error::InconsistentState { reason, .. }) => {
-            shown.warnings.push(format!(
-                "{reason}; without its record dshd cannot tell which profile link is {name}'s, \
-                 so any link to its copy stays in the DSH home"
-            ));
-            fsx::remove_tree(dir.path())?;
-        }
-        Err(other) => return Err(other),
-    }
+    instance::remove(&dir)?;
     drop(lock);
     drop(root_lock);
     if ctx.json {

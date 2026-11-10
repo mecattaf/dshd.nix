@@ -1,7 +1,7 @@
-//! The launch recipe, as pure functions: scanning DSH's launcher grammar in
-//! native argv, the profile rewrite to `<p>@<name>`, the web flag
-//! injection, environment capture with the closed exclusion list, and the
-//! ordered composition of the child environment at every start.
+//! The launch recipe, as pure functions: finding the profile native argv
+//! selects by DSH's launcher grammar, the web flag injection, environment
+//! capture with the closed exclusion list, and the ordered composition of
+//! the child environment at every start.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -9,7 +9,6 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use crate::error::Error;
-use crate::name::InstanceName;
 use crate::record::{EnvVar, OsText, ReleaseFile};
 
 /// Never captured at creation nor refreshed: names that describe one
@@ -72,7 +71,8 @@ pub const CAPTURE_EXCLUDED: &[&str] = &[
     "HC_SCOPE",
     "HC_RUNTIME",
     "HC_TERMINAL_ID",
-    // DSH's own identity, set by dsh from --profile, which dshd always passes.
+    // DSH's own identity, which dsh sets in the shells of the profile it
+    // launched.
     "DSH_PROFILE",
 ];
 
@@ -98,16 +98,15 @@ pub const SESSION_REFRESHED: &[&str] = &[
 pub const RUNNER_PASSTHROUGH: &[&str] = &["INVOCATION_ID", "JOURNAL_STREAM"];
 
 /// The profile word DSH's launcher reserves for plugin management.
-pub const REFUSED_PROFILE_WORD: &str = "plugin";
+const REFUSED_PROFILE_WORD: &str = "plugin";
 
-/// The profile name DSH refuses itself; the `@` rewrite would get around that.
-const DESKTOP_PROFILE: &str = "desktop";
 /// Launcher flags that take a value, as `FLAG V` or `FLAG=V`.
 const PROFILE_FLAG: &str = "--profile";
 const PATCH_FLAG: &str = "--patch";
-/// Launcher flags dshd refuses: the first rebuilds the profile on every
-/// start, the others print and exit.
-const REFUSED_FLAGS: &[&str] = &["--from-default-profile", "-V", "--version"];
+/// The launcher flag that recreates the profile from a shipped template.
+const FROM_DEFAULT_PROFILE_FLAG: &str = "--from-default-profile";
+/// Launcher flags that print and exit.
+const VERSION_FLAGS: &[&str] = &["-V", "--version"];
 /// Prefix of the launcher's dump flags, which print and exit.
 const DUMP_PREFIX: &str = "--dump-";
 /// Ends option parsing; nothing after it is a flag.
@@ -125,30 +124,17 @@ const PWD: &str = "PWD";
 /// DSH's home under the user's home when `DSH_HOME` is blank.
 const DEFAULT_DSH_HOME: &str = ".dsh";
 
-/// The result of scanning native argv.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Scanned {
-    /// The profile the user selected (`web`, `acp`, a user profile).
-    pub profile: String,
-    /// argv with the selection replaced by `--profile <p>@<name>`; every
-    /// other token verbatim.
-    pub args: Vec<OsString>,
-    /// The first app token after the launcher flags (`web`, `acp`, ...),
-    /// when there is one.
-    pub app: Option<String>,
-    /// `--patch` files in order.
-    pub patches: Vec<PathBuf>,
-}
-
-/// Applies DSH's launcher grammar: a first token not starting with `-` is
-/// the profile word; otherwise the leading `--profile V|--profile=V` and
-/// `--patch V|--patch=V` flags are scanned up to the first other token.
-/// Refuses (invalid-argument): no profile, the word `plugin`,
-/// `--from-default-profile`, any `--dump-*`, a profile containing `@`.
-pub fn scan_native_argv(argv: &[OsString], name: &InstanceName) -> Result<Scanned, Error> {
+/// The profile native argv selects, by DSH's launcher grammar: a first
+/// token not starting with `-` is the profile word; otherwise the leading
+/// `--profile V|--profile=V` and `--patch V|--patch=V` flags are scanned up
+/// to the first other token. The argv itself is dsh's, recorded as typed.
+///
+/// Refuses (invalid-argument) what cannot be a held session: no profile,
+/// a profile selected twice, the word `plugin`, a profile that is not one
+/// directory name, `--from-default-profile`, and the flags that print and
+/// exit (`--dump-*`, `-V`, `--version`).
+pub fn selected_profile(argv: &[OsString]) -> Result<String, Error> {
     let mut profile = None;
-    let mut patches = Vec::new();
-    let mut patch_tokens = Vec::new();
     let mut index = 0;
     if let Some(word) = argv
         .first()
@@ -163,13 +149,10 @@ pub fn scan_native_argv(argv: &[OsString], name: &InstanceName) -> Result<Scanne
         index = 1;
     }
     while let Some(token) = argv.get(index) {
-        let start = index;
         let (flag, inline) = split_flag(token);
         let Some(flag @ (PROFILE_FLAG | PATCH_FLAG)) = flag else {
-            if let Some(flag) =
-                flag.filter(|flag| REFUSED_FLAGS.contains(flag) || flag.starts_with(DUMP_PREFIX))
-            {
-                return Err(refused_flag(flag));
+            if let Some(flag) = flag {
+                refuse_flag(flag)?;
             }
             break;
         };
@@ -181,35 +164,15 @@ pub fn scan_native_argv(argv: &[OsString], name: &InstanceName) -> Result<Scanne
                 .ok_or_else(|| refuse(format!("{flag} needs a value")))?
                 .as_os_str()
         };
-        if flag == PATCH_FLAG {
-            patches.push(PathBuf::from(value));
-            patch_tokens.extend(argv.get(start..=index).into_iter().flatten().cloned());
-        } else if profile.is_some() {
-            return Err(refuse("the profile is selected twice".to_owned()));
-        } else {
+        if flag == PROFILE_FLAG {
+            if profile.is_some() {
+                return Err(refuse("the profile is selected twice".to_owned()));
+            }
             profile = Some(profile_name(value)?);
         }
         index += 1;
     }
-    let profile = profile
-        .ok_or_else(|| refuse("no profile: give a profile word or --profile NAME".to_owned()))?;
-    let app = argv
-        .get(index)
-        .and_then(|token| token.to_str())
-        .filter(|token| !token.starts_with('-'))
-        .map(str::to_owned);
-    let mut rewritten = vec![
-        OsString::from(PROFILE_FLAG),
-        OsString::from(name.exposed_profile(&profile)),
-    ];
-    rewritten.extend(patch_tokens);
-    rewritten.extend(argv.iter().skip(index).cloned());
-    Ok(Scanned {
-        profile,
-        args: rewritten,
-        app,
-        patches,
-    })
+    profile.ok_or_else(|| refuse("no profile: give a profile word or --profile NAME".to_owned()))
 }
 
 /// For a web instance: appends `--no-open` unless present, and `--port N`
@@ -354,7 +317,9 @@ fn split_flag(token: &OsStr) -> (Option<&str>, Option<&OsStr>) {
     }
 }
 
-/// Checks a selected profile name.
+/// Checks a selected profile name: dshd reads the profile's manifest at
+/// `<DSH home>/profiles/<name>`, so it must be one directory name, and
+/// UTF-8, since records and generated names hold it as text.
 fn profile_name(word: &OsStr) -> Result<String, Error> {
     let Some(profile) = word.to_str() else {
         return Err(refuse(format!(
@@ -368,10 +333,6 @@ fn profile_name(word: &OsStr) -> Result<String, Error> {
         Some("it names a directory")
     } else if profile.contains('/') {
         Some("it contains `/`")
-    } else if profile.contains('@') {
-        Some("it contains `@`, which names instance copies")
-    } else if profile.eq_ignore_ascii_case(DESKTOP_PROFILE) {
-        Some("DSH reserves it")
     } else {
         None
     };
@@ -383,13 +344,22 @@ fn profile_name(word: &OsStr) -> Result<String, Error> {
     }
 }
 
-fn refused_flag(flag: &str) -> Error {
-    if REFUSED_FLAGS.first() == Some(&flag) {
-        refuse(format!(
-            "{flag} would rebuild the instance's profile copy at every start"
-        ))
+/// Refuses a launcher flag that does not start a session dshd can hold.
+/// `--from-default-profile` recreates the profile from a shipped template,
+/// which a held instance would repeat at every start, discarding what the
+/// user and dsh changed in the profile since.
+fn refuse_flag(flag: &str) -> Result<(), Error> {
+    if flag == FROM_DEFAULT_PROFILE_FLAG {
+        Err(refuse(format!(
+            "{flag} would recreate the profile from its template at every start of the instance; \
+             run it once with dsh directly, then give the profile alone"
+        )))
+    } else if VERSION_FLAGS.contains(&flag) || flag.starts_with(DUMP_PREFIX) {
+        Err(refuse(format!(
+            "{flag} prints and exits; run it with dsh directly"
+        )))
     } else {
-        refuse(format!("{flag} prints and exits; run it with dsh directly"))
+        Ok(())
     }
 }
 

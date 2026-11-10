@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use crate::error::{Error, RecipeDifference};
 use crate::fsx::{self, Lock};
 use crate::name::{self, InstanceDir, InstanceName, LOCK_FILE, MAX_LEN, StateRoot};
-use crate::profile;
 use crate::record::{EnvVar, InstanceRecord, LastRun, OsText, ProfileRef, Transport};
 use crate::release::{self, Release};
 use crate::tool::Tool;
@@ -37,19 +36,16 @@ pub struct CreateRequest {
     pub release_given: bool,
     /// Canonical cwd.
     pub cwd: PathBuf,
-    /// Native argv after rewriting only the profile selection.
+    /// Native argv as typed.
     pub args: Vec<OsString>,
     /// Captured environment after the closed list and `unsetEnvironment`.
     pub environment: Vec<EnvVar>,
-    /// The source profile and its DSH home.
+    /// The profile and its DSH home.
     pub profile: ProfileRef,
-    /// Detected transport.
+    /// The transport the profile selects.
     pub transport: Transport,
     /// Labels, without empty values.
     pub labels: BTreeMap<String, String>,
-    /// `--patch` files from argv, for the composition stamp. A relative
-    /// path is taken against `cwd`, where `dsh` will read it.
-    pub patches: Vec<PathBuf>,
 }
 
 /// The instance directories on disk.
@@ -72,12 +68,11 @@ pub struct Instance {
     pub record: InstanceRecord,
 }
 
-/// Creates the instance directory atomically: build under a temp directory
-/// beside the final one (`profile` copy, `gcroots`, `instance.json` 0600),
-/// expose the profile link, rename into place, then register the
-/// `current` and `booted` roots at their final paths (an indirect root
-/// names its link's path, so it is made after the rename). Any failure
-/// removes what was built. A name that exists is
+/// Creates the instance directory atomically: write `instance.json` (0600)
+/// in a temp directory beside the final one, rename it into place, then
+/// register the `current` and `booted` roots at their final paths (an
+/// indirect root names its link's path, so it is made after the rename).
+/// Any failure removes what was built. A name that exists is
 /// `Error::ExistsDifferentRecipe` after comparison, or `Ok` with the
 /// existing instance when the recipe matches; an existing record dshd
 /// would not act on is `InconsistentState`. The caller holds
@@ -114,25 +109,15 @@ fn generate_name(profile: &str, taken: &[InstanceName]) -> Result<InstanceName, 
     InstanceName::parse(&candidate)
 }
 
-/// Selects the lowest free generated name, avoiding state directories,
-/// loaded units and exposed profile entries. The caller holds [`lock_root`].
+/// Selects the lowest free generated name, avoiding state directories and
+/// loaded units. The caller holds [`lock_root`].
 pub fn choose_name(
     root: &StateRoot,
     loaded: &[InstanceName],
-    dsh_home: &Path,
     profile_name: &str,
 ) -> Result<InstanceName, Error> {
     let mut taken = discover(root)?.names;
     taken.extend_from_slice(loaded);
-    let prefix = format!("{profile_name}@");
-    for (entry, _) in &fsx::list_dir(&profile::profiles_dir(dsh_home))? {
-        let suffix = entry
-            .to_str()
-            .and_then(|entry| entry.strip_prefix(prefix.as_str()));
-        if let Some(Ok(name)) = suffix.map(InstanceName::parse) {
-            taken.push(name);
-        }
-    }
     generate_name(profile_name, &taken)
 }
 
@@ -310,10 +295,9 @@ pub fn strip_environment(instance: &Instance, unset: &[String]) -> Result<Vec<St
     Ok(removed)
 }
 
-/// Repoints `current` at the release and refreshes the profile's gcroots.
-/// Returns `false` when `current` already pointed there. `nix-store`
-/// replaces the link itself (temp link, rename) and registers the root at
-/// the link's own path.
+/// Repoints `current` at the release. Returns `false` when `current`
+/// already pointed there. `nix-store` replaces the link itself (temp link,
+/// rename) and registers the root at the link's own path.
 pub fn update_current(
     instance: &Instance,
     nix_store: &Tool,
@@ -324,17 +308,14 @@ pub fn update_current(
     if changed {
         release::add_root(nix_store, &release.path, &current)?;
     }
-    staging::refresh_gcroots(&instance.dir, nix_store)?;
     Ok(changed)
 }
 
-/// Removes the profile link (only when it points at this instance's copy),
-/// then the directory tree. The caller has checked the unit is not loaded.
-pub fn remove(instance: &Instance) -> Result<(), Error> {
-    let dsh_home = Path::new(instance.record.profile.dsh_home.as_os_str());
-    let exposed = instance.name.exposed_profile(&instance.record.profile.name);
-    profile::unlink_exact(dsh_home, &exposed, &instance.dir.profile())?;
-    fsx::remove_tree(instance.dir.path())
+/// Removes the instance's directory tree, whatever its record holds; an
+/// absent directory is fine. The caller has checked the unit is not
+/// loaded.
+pub fn remove(dir: &InstanceDir) -> Result<(), Error> {
+    fsx::remove_tree(dir.path())
 }
 
 /// Takes the instance lock (`%S/dshd/<name>/lock`). A creation takes the

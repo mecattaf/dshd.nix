@@ -1,10 +1,10 @@
 # VM: crashes and reboots (P2.5, P3.5). A killed headless dsh, an instance
 # running when the machine loses power and one running at a clean reboot
 # each report what happened to them; an enabled instance comes back after
-# both, with its profile copy as it was.
+# both, with the DSH home as it was.
 # catches: a headless prompt run again without --rerun, a crash or reboot
 # reported as a clean stop, an enabled instance not coming back, a boot
-# rewriting a profile copy.
+# writing in the DSH home.
 { self, pkgs }:
 let
   vm = import ./vm-node.nix { inherit self pkgs; };
@@ -80,9 +80,8 @@ pkgs.testers.runNixOSTest {
 
     run_bg("--name daily -- web", "web")
     assert dshd("enable daily")["outcome"] == "enabled"
-    run(f"printf '{{}}\\n' > {STATE}/daily/profile/plugin-state.json")
-    copy = snapshot(f"{STATE}/daily/profile")
     run_bg("--name crashed -- web", "web")
+    home = snapshot("~alice/.dsh")
 
     # catches: an instance cut by power loss reported as stopped, or an enabled
     # instance not coming back after it
@@ -98,7 +97,7 @@ pkgs.testers.runNixOSTest {
         receipt("crashed", "P2.5")
 
     # catches: a clean reboot reported as a crash or as dshd's own stop, an
-    # enabled instance not coming back, a boot rewriting its profile copy, a
+    # enabled instance not coming back, a boot writing in the DSH home, a
     # stale state blocking start, a failed task forgotten by a reboot
     with subtest("P3.5 enabled comes back"):
         assert dshd("start crashed")["outcome"] == "started"
@@ -109,7 +108,7 @@ pkgs.testers.runNixOSTest {
         assert report["state"] == "previous-boot", report
         assert report["lastRun"]["ending"] == "stopped-without-intent", report
         assert get("chore")["state"] == "failed"
-        assert snapshot(f"{STATE}/daily/profile") == copy
+        assert snapshot("~alice/.dsh") == home
         assert "dshd" not in run("systemctl --user list-timers --all --no-legend")
         assert dshd("start crashed")["outcome"] == "started"
         assert get("crashed")["state"] == "running"

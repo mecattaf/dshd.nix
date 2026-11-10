@@ -31,8 +31,11 @@
   web instance's origin and default port, and relays an ACP instance's stdio to one
   controller at a time, holding sessions and permission requests between
   controllers.
-- Per-instance profile copies exposed to DSH as `<profile>@NAME`, so a
-  running instance never sees an edit to its source profile.
+- Profiles stay DSH's own: `dsh` gets the argv as typed and composes the
+  live profile of its DSH home at every start, and dshd writes nothing in
+  that home. dshd reads the profile's bundles for the transport, records
+  it at creation and fails a start whose profile now selects another; a
+  shipped profile that does not exist yet is created by `dsh` itself.
 - The NixOS module `dshd` (`enable`, `package`, `releases`,
   `defaultRelease`, `startupTimeout`): one static `dshd@.service` template
   that no switch restarts or stops, `dshd.target`, and the release
@@ -41,11 +44,19 @@
   environment defaults in one store path; `DSH_PERMISSION_MODE` defaults
   to `danger-full-access`.
 - Frozen names: the `dshd@NAME.service` unit and `dshd.target`, the files
-  under `%S/dshd/NAME` and `%t/dshd/NAME`, `/etc/dshd/releases/NAME`, the
-  `<profile>@NAME` profile link and the run start and end journal lines.
+  under `%S/dshd/NAME` and `%t/dshd/NAME`, `/etc/dshd/releases/NAME` and
+  the run start and end journal lines.
 - Checks: cargo tests with the golden CLI cases and the contract tests,
   clippy, rustfmt, nixfmt, deadnix, the module's rendered unit, public-tree
   hygiene with the licence and attribution, and NixOS VM tests of the
   lifecycle, the transports, switches and reboots.
 - Licensed under Apache-2.0; `NOTICE` holds the copyright and the
   attribution of adapted code.
+- **Breaking:** the per-instance profile snapshot is gone. Removed: the
+  `composition` field of `instance.json`; the `exposed`, `linked` and
+  `edited` fields of `profile` in `get` and the other reports; the error
+  kind `profile-link-exists`; the `profile/` and `gcroots/` entries of
+  `%S/dshd/NAME`; and the frozen `<profile>@NAME` profile link. `args` in
+  `instance.json` and in the reports is the argv as typed, without a
+  rewritten `--profile`. A record with `composition` is refused as
+  unknown: remove the instance with `dshd rm NAME` and run it again.

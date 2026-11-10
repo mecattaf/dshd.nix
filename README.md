@@ -31,8 +31,8 @@ system configuration supplies `dsh`, and dshd runs the release it is given.
 - Releases are Nix store paths. An instance keeps running the exact bytes
   it started with, across switches, rollbacks and garbage collection, until
   you deliberately update and stop or restart it.
-- Each instance boots its own copy of a DSH profile, so editing the source
-  profile or starting a candidate never changes a running instance.
+- dshd only launches DSH. An instance runs its DSH profile live from its
+  DSH home, with the argv as typed, and dshd writes nothing in that home.
 - Web instances keep their origin and default port across restarts;
   `attach --print-url` gives the current login token. ACP instances keep
   their sessions across controllers: a client can detach mid-turn and
@@ -50,8 +50,6 @@ system configuration supplies `dsh`, and dshd runs the release it is given.
   current         -> /nix/store/...-dshd-release-...   the release the next start uses (GC root)
   booted          -> /nix/store/...-dshd-release-...   the running release; current again after a stop (GC root)
   web-port        the pinned port of a web instance
-  profile/        the instance's own copy of its DSH profile
-  gcroots/        GC roots for store paths the profile copy links to
   lock            taken by every command that changes the instance
 %t/dshd/NAME/     runtime directory (0700): web-url (0600), acp.sock (0600), stop-intent
 ```
@@ -156,9 +154,7 @@ A store path built this way can be run without declaring it, with
 `dshd run --release /nix/store/...-dshd-release-... -- web`; the template
 still comes from the module.
 
-When `dsh` is a wrapper script, it must accept any `--profile`, including
-the `<p>@<name>` names dshd uses, must not pin the permission mode, and must
-not relink profiles under `$DSH_HOME/profiles`.
+When `dsh` is a wrapper script, it must not pin the permission mode.
 
 Try the command without installing it:
 
@@ -225,18 +221,18 @@ reference for each verb.
 |---|---|---|---|
 | `run -- ARGS` | `--bg`, `--name N`, `--release R`, `--cwd D`, `--label K=V`..., `--timeout S` | `created`, `started`, `already-running`, `ended`, `still-running` | Creates the instance, or matches the stored recipe of `--name`, and starts it. Web and ACP instances, and any instance with `--bg`, are left running. A headless instance runs in the foreground until `dsh` exits or `--timeout` passes. A different recipe under an existing name is refused. |
 | `start NAME` | `--rerun` | `started`, `already-running` | Starts the instance again from its recorded recipe and its `current` release. Never creates one. A headless instance whose task ran is refused unless `--rerun` is given. |
-| `stop NAME` | | `stopped`, `already-stopped` | Stops the unit and every process it started. The recipe, the release roots, the profile copy and DSH's sessions stay. |
+| `stop NAME` | | `stopped`, `already-stopped` | Stops the unit and every process it started. The recipe, the release roots and DSH's sessions stay. |
 | `restart NAME` | | `restarted` | Clears a failed state, restarts on the `current` release and waits until the instance runs. Refused for headless instances. |
 | `update NAME` | `-R` | `updated`, `unchanged` | Points `current` at what the recorded release name resolves to now and prints `nix store diff-closures` between the two releases; `-R` also restarts a running web or ACP instance. Refused for an instance created from a store path. |
 | `ls` | | | Every instance: `NAME: state(release)`, with the command to run when one is needed. |
-| `get NAME` | | | Everything dshd knows about one instance: the unit, the recipe, the release links, the profile copy, the web address or the ACP relay's report, how the last run ended, and whether linger is on. |
+| `get NAME` | | | Everything dshd knows about one instance: the unit, the recipe, the release links, the profile and its DSH home, the web address or the ACP relay's report, how the last run ended, and whether linger is on. |
 | `read NAME` | `-n LINES`, `-f` | | The journal of the current run, or of the last one, as DSH wrote it (200 lines by default). `-f` follows until the run ends. |
 | `wait NAME` | `--timeout S` | `ended`, `still-running` | Waits until the current run ends, then exits as `dsh` did. A run that ended already is reported at once. |
 | `attach NAME` | `--via web\|acp`, `--takeover`, `--print-url`, `--open` | | Never starts anything. Web: prints the origin, or the full URL with `--print-url`, or opens it with `--open`. ACP: runs the relay client of the instance's own release on stdio. |
 | `label NAME K=V...` | | `labelled` | Sets labels; an empty value removes the key. `dsh` never sees labels, and the instance keeps running. |
 | `enable NAME` | | `enabled`, `already-enabled` | Adds the unit to `dshd.target`, which the user manager starts at its first login, or at boot with linger. Starts nothing. Refused for headless instances. |
 | `disable NAME` | | `disabled`, `already-disabled` | Removes the unit from `dshd.target`. Stops nothing. |
-| `rm NAME` | | `removed` | Refused while running. Removes the profile link when it is dshd's, then the instance directory and its GC roots. DSH sessions are untouched. |
+| `rm NAME` | | `removed` | Refused while running. Removes the instance directory and its release roots. The profile and DSH's sessions are untouched. |
 | `help [VERB]` | | | The general page, or the page of one verb. |
 | `--skill` | | | Prints the guide for agents: which verb for which need, the JSON shapes and the traps. |
 | `--version` | | | Prints `dshd 0.1.0`. |
@@ -253,36 +249,40 @@ recreated name is a different instance to anything that keeps references.
 
 ## Profiles and accounts
 
-dshd does not load profiles; DSH still does. `dshd run -- web` runs the
-same `dsh web` you would type, so composition is unchanged: the bundles in
-`package.json`, then `cordis.patch.yml`, then any `--patch`.
+Profiles are DSH's own, and dshd neither copies nor changes them.
+`dshd run -- web` runs the same `dsh web` you would type, with every token
+as typed, and DSH composes the profile at every start from what is in
+`$DSH_HOME/profiles/<p>` then: the bundles in `package.json`, then
+`cordis.patch.yml`, then any `--patch`. dshd writes nothing in the DSH
+home. What an instance keeps across starts is its release, the `dsh`
+build and the runner, until `dshd update`.
 
-What dshd adds is a snapshot. At creation it copies
-`$DSH_HOME/profiles/<p>` into the instance directory (everything except
-`cordis.yml` and `.git`) and DSH boots the copy as profile `<p>@NAME`
-through one symlink, `$DSH_HOME/profiles/<p>@NAME`. Only the profile
-selection in argv is rewritten, to `--profile <p>@NAME`; every other token
-passes through unchanged. A profile that does not exist yet is first
-created by DSH itself with `dsh --profile <p> --dump-default-config`.
+dshd reads one thing from the profile: the bundles in its `package.json`,
+which give the instance its transport at creation. The transport is
+recorded, and a start fails before `dsh` runs when the profile now selects
+another one: `dshd start` reports `start-failed`, and `dshd read NAME`
+says which. Restore the profile, or recreate the instance for it with
+`dshd rm NAME` and `dshd run --name NAME -- ARGS`; sessions continue,
+because DSH keeps them per home and working directory.
 
-- Edit the source profile freely: running and retained instances keep the
-  composition they were created with until you remove them.
-- Try a change beside a running instance: `dshd run --name web-try -- web`.
-  Keep whichever works and remove the other.
-- An instance's settings UI and plugin manager write into its own copy and
-  apply live. To keep such an edit, copy the instance's
-  `$DSH_HOME/profiles/<p>@NAME/cordis.patch.yml` back to the source profile
-  and review the diff.
-- Re-snapshot under the same name with `dshd stop NAME`, `dshd rm NAME`
-  and `dshd run --name NAME -- ARGS`. Sessions continue, because DSH keeps
-  them per home and working directory.
-- Profile sources can live in a git checkout: link
-  `$DSH_HOME/profiles/<p>` to a directory of it, and ignore `node_modules/`
-  and `cordis.yml`. dshd snapshots whatever is checked out.
-- `--from-default-profile` is refused, because it would replace the copy on
-  every start.
-- `dsh --profile <p>@NAME --dump-config` shows exactly what an instance
-  composes.
+A profile DSH ships, such as `web`, `acp` or `headless`, that does not exist
+yet in the home is created by DSH itself: dshd runs
+`dsh --profile <p> --dump-default-config` in the instance's directory and
+environment, then reads the `package.json` DSH wrote. For any other
+missing profile, DSH's refusal is the error.
+
+- Editing a profile changes every instance of it at its next start, as it
+  would change `dsh` typed by hand; a running instance keeps what it
+  booted.
+- An instance's settings UI and plugin manager write into the profile, as
+  they do for `dsh` typed by hand.
+- `dsh --profile <p> --dump-config` shows what an instance composes at its
+  next start.
+- `--from-default-profile` is refused, because it would recreate the
+  profile from its template at every start; run it once with `dsh`
+  directly, then give the profile alone.
+- `plugin`, `--dump-*`, `-V` and `--version` are refused: they manage
+  plugins or print and exit, so there is no session to hold.
 
 An account is a DSH home. `DSH_HOME=~/.dsh-work dshd run -- web` runs an
 instance in that home; dshd records the resolved home, sets it explicitly
@@ -333,7 +333,7 @@ reuses the captured environment.
 | login session | `XDG_SESSION_ID`, `XDG_SESSION_CLASS`, `XDG_SEAT`, `XDG_VTNR` |
 | shell bookkeeping | `PWD`, `OLDPWD`, `SHLVL`, `_` |
 | another supervisor's per-process identity, which would let it end or adopt the instance's processes | `HC_SCOPE`, `HC_RUNTIME`, `HC_TERMINAL_ID` |
-| DSH's own identity, set by `dsh` from the `--profile` dshd always passes | `DSH_PROFILE` |
+| DSH's own identity, which `dsh` sets in the shells of the profile it launched | `DSH_PROFILE` |
 | taken from the user manager at each start, or left unset when it has none | `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`, `SSH_AUTH_SOCK`, `XDG_SESSION_TYPE`, `XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP`, `DESKTOP_SESSION` |
 | the release's `unsetEnvironment` | stripped at creation and again at every start |
 
@@ -486,8 +486,8 @@ run's output. dshd keeps no timeline store or resource projection.
 ## Coexistence and migration
 
 dshd owns only the `dshd@*` units, `dshd.target`, `%S/dshd`, `%t/dshd`,
-`/etc/dshd`, one `<p>@NAME` link per instance in a DSH home and one
-`dshd.target.wants` link per enabled instance. It never stops, restarts,
+`/etc/dshd` and one `dshd.target.wants` link per enabled instance, and it
+writes nothing in a DSH home. It never stops, restarts,
 signals or lists any other user unit or process, never writes a unit file
 or a drop-in, and never reloads the user manager to create or remove an
 instance. `enable` links `dshd@NAME.service` to
@@ -555,7 +555,7 @@ describes every object.
 | 1 | operation failed | `start-failed`, `stop-failed`, `release-invalid`, `io`, `inconsistent-state`, `systemctl-failed` |
 | 2 | usage | `invalid-argument`, `invalid-name`, `needs-target` |
 | 3 | not found | `not-found`, `release-not-found` |
-| 4 | conflict | `exists-different-recipe`, `instance-running`, `task-already-ran`, `unit-masked`, `attached-elsewhere`, `profile-link-exists` |
+| 4 | conflict | `exists-different-recipe`, `instance-running`, `task-already-ran`, `unit-masked`, `attached-elsewhere` |
 | 5 | not running | `not-running` |
 | 6 | unsupported | `unsupported-transport`, `unsupported-profile`, `autostart-not-allowed` |
 | 7 | environment unavailable | `systemd-unavailable`, `tool-missing`, `template-missing` |
@@ -574,8 +574,7 @@ change. Removing or renaming a field, changing its type or meaning, adding
 a value to a closed vocabulary or renumbering an exit code is a breaking
 change, made only with a **Breaking:** entry in the CHANGELOG. The unit
 and target names, the paths under `%S/dshd`, `%t/dshd` and
-`/etc/dshd/releases`, the `<p>@NAME` profile link and the journal markers
-are frozen the same way. Records on disk carry no version
+`/etc/dshd/releases` and the journal markers are frozen the same way. Records on disk carry no version
 number and are closed: a command or runner that acts on a record refuses
 one with a field it does not know rather than guess.
 
@@ -598,9 +597,9 @@ one with a field it does not know rather than guess.
   instances are runtime data.
 - Linux with a systemd user manager and the NixOS module's template only.
 - The checks run every runtime proof against a stub `dsh`. How a real
-  `dsh` takes the `<p>@NAME` profile names and linked profile directories,
-  the URL line `dsh web` prints, `--port 0` and ACP session resume is
-  modelled by the stub, not observed.
+  `dsh` materialises a shipped profile with `--dump-default-config`, the
+  URL line `dsh web` prints, `--port 0` and ACP session resume is modelled
+  by the stub, not observed.
 
 ## Development
 

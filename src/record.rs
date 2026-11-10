@@ -101,7 +101,7 @@ pub struct EnvVar {
 }
 
 /// How the instance is reached. Derived from the profile's bundles at create
-/// time and recorded, never guessed again.
+/// time and recorded; every start refuses a profile that selects another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Transport {
@@ -124,13 +124,13 @@ impl Transport {
     }
 }
 
-/// Where the instance's profile copy came from.
+/// The DSH profile an instance runs, live from its DSH home.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileRef {
-    /// The source profile name as given to `dsh` (`web`, `acp`, a user profile).
+    /// The profile name as given to `dsh` (`web`, `acp`, a user profile).
     pub name: String,
-    /// The DSH home the profile was taken from and is exposed into.
+    /// The DSH home the profile lives in, which the instance runs with.
     pub dsh_home: OsText,
     /// Keys this version does not know; an acting reader refuses them.
     #[serde(flatten)]
@@ -150,13 +150,13 @@ pub struct InstanceRecord {
     pub release: String,
     /// Working directory `dsh` is started in.
     pub cwd: OsText,
-    /// Native `dsh` arguments after rewriting only `--profile <p>@<name>`.
-    /// Web defaults are injected independently at each start.
+    /// Native `dsh` arguments as typed. Web defaults are injected
+    /// independently at each start.
     pub args: Vec<OsText>,
     /// The environment captured at create time, after the closed exclusion
     /// list and the release's `unsetEnvironment` were applied.
     pub environment: Vec<EnvVar>,
-    /// The profile the instance owns a copy of.
+    /// The profile the instance runs.
     pub profile: ProfileRef,
     /// How the instance is reached.
     pub transport: Transport,
@@ -165,53 +165,7 @@ pub struct InstanceRecord {
     pub labels: BTreeMap<String, String>,
     /// Unix seconds when the record was created.
     pub created_at: u64,
-    /// Stamp of the profile copy at create/update time, so `status` can say
-    /// whether the live copy was edited since.
-    pub composition: Composition,
     /// Keys this version does not know. Must be empty for a reader that acts.
-    #[serde(flatten)]
-    pub unrecognized: serde_json::Map<String, serde_json::Value>,
-}
-
-/// A size and mtime pair for one file in the profile copy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileStamp {
-    /// File size in bytes.
-    pub size: u64,
-    /// Modification time, whole seconds since the epoch.
-    pub mtime_secs: u64,
-    /// Modification time, nanoseconds part.
-    pub mtime_nanos: u32,
-    /// Keys this version does not know; an acting reader refuses them.
-    #[serde(flatten)]
-    pub unrecognized: serde_json::Map<String, serde_json::Value>,
-}
-
-/// One `--patch` file as recorded at create time.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PatchStamp {
-    /// The patch path as given on the command line.
-    pub path: OsText,
-    /// Its stamp at record time.
-    pub stamp: FileStamp,
-    /// Keys this version does not know; an acting reader refuses them.
-    #[serde(flatten)]
-    pub unrecognized: serde_json::Map<String, serde_json::Value>,
-}
-
-/// What the instance was composed from, so drift is reportable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Composition {
-    /// Stamp of `profile/config.yaml` in the instance's copy, keyed by
-    /// relative file path inside the copy.
-    pub files: BTreeMap<String, FileStamp>,
-    /// Patches given with `--patch`, in order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub patches: Vec<PatchStamp>,
-    /// Keys this version does not know; an acting reader refuses them.
     #[serde(flatten)]
     pub unrecognized: serde_json::Map<String, serde_json::Value>,
 }

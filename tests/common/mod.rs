@@ -26,6 +26,7 @@ use dshd::name::{
     StateRoot,
 };
 use dshd::record::{InstanceRecord, OsText, ProfileRef};
+use dshd::tool::Tool;
 use dshd::{fsx, instance, launch, profile, release, sys};
 use serde_json::json;
 
@@ -67,7 +68,7 @@ const JOURNAL: &str = "journal";
 /// The file the stub waits for on a prompt that mentions "gate".
 pub(crate) const GATE: &str = "gate";
 
-/// The instance a test asks for: the source profile word (`web`, `acp` or
+/// The instance a test asks for: the profile word (`web`, `acp` or
 /// `headless`), the app arguments after it as a user types them, and
 /// variables recorded besides `PATH`, `HOME` and the stub's own.
 pub(crate) struct Spec<'a> {
@@ -88,9 +89,9 @@ pub(crate) struct Instance {
 }
 
 impl Instance {
-    /// Lays the instance out as `dshd start` does before it starts the
-    /// unit: release links, profile copy and its exposed link, and the
-    /// record, built with the same launch and profile functions.
+    /// Lays the instance out as `dshd run` does before it starts the unit:
+    /// the profile in the DSH home, the release links and the record, built
+    /// with the same launch and profile functions.
     pub(crate) fn create(name: &str, spec: &Spec<'_>) -> TestResult<Self> {
         let name = InstanceName::parse(name)?;
         let seq = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
@@ -181,13 +182,7 @@ impl Instance {
 
     fn lay_out(&self, spec: &Spec<'_>) -> TestResult {
         let release = self.path(RELEASE);
-        for dir in [
-            WORK,
-            HOME,
-            "dsh/profiles",
-            "release/bin",
-            "release/share/dshd",
-        ] {
+        for dir in [WORK, HOME, "release/bin", "release/share/dshd"] {
             fs::create_dir_all(self.path(dir))?;
         }
         fs::create_dir_all(self.runtime().path())?;
@@ -196,21 +191,19 @@ impl Instance {
         fs::copy(RELEASE_JSON, release.join(RELEASE_FILE))?;
         let release_file = release::validate(&release)?;
 
-        let dir = self.dir();
-        fs::create_dir_all(dir.profile())?;
-        fs::write(dir.profile().join("package.json"), manifest(spec.profile)?)?;
         let dsh_home = self.path(DSH_HOME);
-        profile::expose(
-            &dsh_home,
-            &self.name.exposed_profile(spec.profile),
-            &dir.profile(),
-        )?;
+        let profile_dir = dsh_home.join("profiles").join(spec.profile);
+        fs::create_dir_all(&profile_dir)?;
+        fs::write(profile_dir.join("package.json"), manifest(spec.profile)?)?;
+        let dir = self.dir();
+        fs::create_dir_all(dir.path())?;
         symlink(&release, dir.current())?;
 
         let mut typed = vec![OsString::from(spec.profile)];
         typed.extend(spec.args.iter().map(OsString::from));
-        let args = launch::scan_native_argv(&typed, &self.name)?.args;
-        let transport = profile::detect_transport(&dir.profile(), spec.profile)?;
+        let selected = launch::selected_profile(&typed)?;
+        let dsh = Tool::at("dsh", release.join(RELEASE_DSH));
+        let transport = profile::transport(&dsh, dsh.command(), &dsh_home, &selected)?;
         let mut variables = vec![
             (OsString::from("PATH"), host_path()),
             (OsString::from("HOME"), self.path(HOME).into_os_string()),
@@ -233,17 +226,16 @@ impl Instance {
             name: self.name.to_string(),
             release: RELEASE_NAME.to_owned(),
             cwd: OsText::new(self.path(WORK)),
-            args: args.into_iter().map(OsText::from).collect(),
+            args: typed.into_iter().map(OsText::from).collect(),
             environment: launch::capture_environment(&variables, &release_file.unset_environment),
             profile: ProfileRef {
-                name: spec.profile.to_owned(),
+                name: selected,
                 dsh_home: OsText::new(dsh_home),
                 unrecognized: serde_json::Map::new(),
             },
             transport,
             labels: BTreeMap::new(),
             created_at: fsx::unix_now(),
-            composition: profile::composition_stamp(&dir.profile(), &[])?,
             unrecognized: serde_json::Map::new(),
         };
         fsx::write_json_atomic(&dir.instance_json(), &record, RECORD_MODE)?;
@@ -388,8 +380,8 @@ fn host_path() -> OsString {
     std::env::var_os("PATH").unwrap_or_default()
 }
 
-/// A source profile's `package.json` with DSH's real bundles for it: the
-/// base, and the app that gives the profile its transport.
+/// A profile's `package.json` with DSH's real bundles for it: the base, and
+/// the app that gives the profile its transport.
 fn manifest(profile: &str) -> TestResult<Vec<u8>> {
     let app = match profile {
         "web" => "@deepseek-ai/dsh-web-app",

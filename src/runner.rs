@@ -1,6 +1,7 @@
 //! The runner: the main process of `dshd@<name>.service`. `run` loads the
-//! record, checks cwd and profile link, composes the environment, spawns
-//! `dsh` with pipes, reports readiness over `sd_notify`, supervises the
+//! record, checks cwd and release, composes the environment, checks that
+//! the live profile still selects the recorded transport, spawns `dsh`
+//! with pipes, reports readiness over `sd_notify`, supervises the
 //! child on its main thread (stop signals and reaping, see `signal`) and
 //! picks one exit status. `poststop` completes `last-run.json` from what
 //! systemd hands `ExecStopPost`.
@@ -33,8 +34,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 use crate::name::{InstanceDir, InstanceName, RELEASE_DSH, RuntimeDir, StateRoot};
-use crate::record::{ChildEnd, InstanceRecord, LastRun, OsText, ReleaseFile, Transport};
+use crate::record::{ChildEnd, InstanceRecord, LastRun, OsText, Transport};
 use crate::relay::Relay;
+use crate::tool::Tool;
 use crate::{fsx, instance, launch, out, profile, release, sys, systemctl};
 
 use self::notify::Notify;
@@ -190,9 +192,10 @@ struct Launch {
     record: InstanceRecord,
     /// The release store path `current` names and `booted` now names.
     release: PathBuf,
-    release_file: ReleaseFile,
     /// The recorded cwd, verified to be a directory.
     cwd: PathBuf,
+    /// The composed environment `dsh` gets, and nothing else.
+    environment: Vec<(OsString, OsString)>,
     /// The recorded argv, with the pinned web port applied.
     args: Vec<OsString>,
     /// A web instance with no pinned port yet: pin the announced one.
@@ -200,19 +203,34 @@ struct Launch {
 }
 
 impl Launch {
-    /// Checks the record, cwd, profile link and release, refusing before
-    /// anything is spawned; then repoints `booted` and writes the start half
-    /// of `last-run.json` (`end` null), which is what a crash leaves behind
-    /// for `interrupted`.
+    /// Checks the record, cwd, release and the live profile's transport,
+    /// refusing before `dsh` is spawned; then repoints `booted` and writes
+    /// the start half of `last-run.json` (`end` null), which is what a
+    /// crash leaves behind for `interrupted`.
     fn prepare(raw: &str) -> Result<Self, Error> {
         let place = Place::from_process(raw)?;
         let started_at = fsx::unix_now();
         let record = instance::load_strict(&place.root, &place.name)?.record;
         let cwd = fsx::canonical_dir(Path::new(record.cwd.as_os_str()))?;
-        verify_profile_link(&place, &record)?;
         let release = fsx::read_link(&place.dir.current())?
             .ok_or_else(|| inconsistent(&place.name, "the current release link is missing"))?;
         let release_file = release::validate(&release)?;
+        let runner_environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+        let environment = launch::compose_environment(
+            &record.environment,
+            &runner_environment,
+            &release_file,
+            Path::new(record.profile.dsh_home.as_os_str()),
+            &cwd,
+            &runner_environment,
+        );
+        let dsh = release.join(RELEASE_DSH);
+        check_transport(
+            &place.name,
+            &record,
+            &dsh,
+            dsh_command(&dsh, &environment, &cwd),
+        )?;
         let (args, pin_port) = launch_args(&place.dir, &record)?;
         fsx::symlink_replace(&release, &place.dir.booted())?;
         let start = LastRun {
@@ -229,8 +247,8 @@ impl Launch {
             place,
             record,
             release,
-            release_file,
             cwd,
+            environment,
             args,
             pin_port,
         })
@@ -299,32 +317,17 @@ impl Launch {
         status
     }
 
-    /// `<release>/bin/dsh` with the recorded argv, the composed environment
-    /// and nothing inherited, in the recorded cwd, stdio per transport.
+    /// `<release>/bin/dsh` with the recorded argv, stdio per transport.
     fn spawn(&self) -> Result<Child, Error> {
         let dsh = self.release.join(RELEASE_DSH);
-        let runner_environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-        let environment = launch::compose_environment(
-            &self.record.environment,
-            &runner_environment,
-            &self.release_file,
-            Path::new(self.record.profile.dsh_home.as_os_str()),
-            &self.cwd,
-            &runner_environment,
-        );
         let (stdin, stdout) = match self.record.transport {
             Transport::Web => (Stdio::null(), Stdio::piped()),
             Transport::Acp => (Stdio::piped(), Stdio::piped()),
             Transport::None => (Stdio::null(), Stdio::inherit()),
         };
-        let mut command = Command::new(&dsh);
-        command
-            .args(&self.args)
-            .env_clear()
-            .envs(environment)
-            .current_dir(&self.cwd);
+        let mut command = dsh_command(&dsh, &self.environment, &self.cwd);
+        command.args(&self.args);
         command.stdin(stdin).stdout(stdout).stderr(Stdio::inherit());
-        sys::unmask_on_exec(&mut command);
         command
             .spawn()
             .map_err(|source| Error::io("start", dsh, source))
@@ -465,18 +468,43 @@ fn launch_args(dir: &InstanceDir, record: &InstanceRecord) -> Result<(Vec<OsStri
     Ok((args, injected && pinned.is_none()))
 }
 
-/// `$DSH_HOME/profiles/<p>@<name>` must point at the instance's copy.
-fn verify_profile_link(place: &Place, record: &InstanceRecord) -> Result<(), Error> {
-    let dsh_home = Path::new(record.profile.dsh_home.as_os_str());
-    let exposed = place.name.exposed_profile(&record.profile.name);
-    if profile::verify_link(dsh_home, &exposed, &place.dir.profile())? {
+/// `dsh` with the composed environment and nothing inherited, in the
+/// recorded cwd, starting with no blocked signals. The caller adds the
+/// arguments and stdio.
+fn dsh_command(dsh: &Path, environment: &[(OsString, OsString)], cwd: &Path) -> Command {
+    let mut command = Command::new(dsh);
+    command
+        .env_clear()
+        .envs(environment.iter().cloned())
+        .current_dir(cwd);
+    sys::unmask_on_exec(&mut command);
+    command
+}
+
+/// The live profile must still select the recorded transport, since the
+/// runner serves that one and dsh boots the profile as it is now. A
+/// profile that is gone is materialised by dsh through `materialise` first,
+/// as dsh's own boot would.
+fn check_transport(
+    name: &InstanceName,
+    record: &InstanceRecord,
+    dsh: &Path,
+    materialise: Command,
+) -> Result<(), Error> {
+    let profile = &record.profile;
+    let dsh_home = Path::new(profile.dsh_home.as_os_str());
+    let live = profile::transport(&Tool::at("dsh", dsh), materialise, dsh_home, &profile.name)?;
+    if live == record.transport {
         return Ok(());
     }
-    let link = profile::profiles_dir(dsh_home).join(&exposed);
-    Err(inconsistent(
-        &place.name,
-        &format!("the profile link {} is missing", link.display()),
-    ))
+    Err(Error::InvalidArgument(format!(
+        "profile {} in {} now selects transport {}, and {name} was created for {}: \
+         restore the profile, or remove the instance with dshd rm {name} and run it again",
+        profile.name,
+        dsh_home.display(),
+        live.slug(),
+        record.transport.slug(),
+    )))
 }
 
 fn inconsistent(name: &InstanceName, reason: &str) -> Error {

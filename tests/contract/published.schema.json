@@ -604,7 +604,6 @@
         "unit-masked",
         "not-running",
         "attached-elsewhere",
-        "profile-link-exists",
         "unsupported-transport",
         "unsupported-profile",
         "autostart-not-allowed",
@@ -729,25 +728,13 @@
         "name": {
           "type": "string"
         },
-        "exposed": {
-          "type": "string"
-        },
         "dshHome": {
           "type": "string"
-        },
-        "linked": {
-          "type": "boolean"
-        },
-        "edited": {
-          "type": "boolean"
         }
       },
       "required": [
         "name",
-        "exposed",
-        "dshHome",
-        "linked",
-        "edited"
+        "dshHome"
       ],
       "additionalProperties": false
     },
@@ -968,9 +955,6 @@
         "createdAt": {
           "type": "integer",
           "minimum": 0
-        },
-        "composition": {
-          "$ref": "#/$defs/composition"
         }
       },
       "required": [
@@ -982,8 +966,7 @@
         "environment",
         "profile",
         "transport",
-        "createdAt",
-        "composition"
+        "createdAt"
       ],
       "additionalProperties": false
     },
@@ -1126,66 +1109,6 @@
       "required": [
         "name",
         "dshHome"
-      ],
-      "additionalProperties": false
-    },
-    "composition": {
-      "type": "object",
-      "properties": {
-        "files": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/fileStamp"
-          }
-        },
-        "patches": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/patchStamp"
-          }
-        }
-      },
-      "required": [
-        "files"
-      ],
-      "additionalProperties": false
-    },
-    "fileStamp": {
-      "type": "object",
-      "properties": {
-        "size": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "mtimeSecs": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "mtimeNanos": {
-          "type": "integer",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "size",
-        "mtimeSecs",
-        "mtimeNanos"
-      ],
-      "additionalProperties": false
-    },
-    "patchStamp": {
-      "type": "object",
-      "properties": {
-        "path": {
-          "$ref": "#/$defs/osText"
-        },
-        "stamp": {
-          "$ref": "#/$defs/fileStamp"
-        }
-      },
-      "required": [
-        "path",
-        "stamp"
       ],
       "additionalProperties": false
     },

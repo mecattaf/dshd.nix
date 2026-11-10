@@ -6,9 +6,12 @@
 //!
 //! `%RELEASE%` is a release store path built from the stub dsh, named by
 //! `DSHD_GOLDEN_RELEASE`. Without it the cases are only checked for their
-//! shape, and the harness says so on stderr.
+//! shape, and the harness says so on stderr. In every case the DSH home is
+//! the same tree after `dshd` ran as before: dshd never writes there.
 
-use std::collections::BTreeMap;
+mod tree;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
 use std::io::{self, Write};
@@ -17,6 +20,8 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Output, Stdio};
 
 use serde_json::Value;
+
+use tree::tree;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
@@ -30,6 +35,8 @@ const DSHD: &str = env!("CARGO_BIN_EXE_dshd");
 const RELEASE_VARIABLE: &str = "DSHD_GOLDEN_RELEASE";
 /// The directory every case starts from.
 const BASE: &str = "base";
+/// The DSH home under the case root, which `dshd` only reads.
+const DSH_HOME: &str = "dsh";
 /// The fakes put on the case's `PATH`.
 const FAKES: [&str; 4] = ["systemctl", "journalctl", "nix-store", "xdg-open"];
 /// The utilities the fakes run, linked from the test's own `PATH`.
@@ -61,7 +68,8 @@ const CANARY_SUFFIX: &str = "_CANARY";
 const RECORD_MODE: u32 = 0o600;
 
 // catches: a changed output, outcome, error kind, exit code or tool argv in a golden case, a malformed or
-// renamed cited case, a creating shell's secret leaking past the record, a release variable naming nothing
+// renamed cited case, a creating shell's secret leaking past the record, a release variable naming nothing,
+// and any write dshd makes in the DSH home
 #[test]
 fn golden_cases_hold_without_drift() -> TestResult {
     let cases = case_names()?;
@@ -302,9 +310,24 @@ impl Case {
             .lines()
             .map(|arg| self.substitute(arg))
             .collect();
+        let home = self.under_root(DSH_HOME);
+        let home_before = tree(&home)?;
         let output = self.dshd(&argv)?;
         self.record_actual(&output)?;
         let mut differences = Vec::new();
+        let home_after = tree(&home)?;
+        let paths: BTreeSet<&PathBuf> = home_before.keys().chain(home_after.keys()).collect();
+        for path in paths {
+            let (was, is) = (home_before.get(path), home_after.get(path));
+            if was != is {
+                differences.push(format!(
+                    "dshd changed {} in the DSH home: {} became {}",
+                    self.normalize(&path.display().to_string()),
+                    was.map_or("nothing", String::as_str),
+                    is.map_or("nothing", String::as_str)
+                ));
+            }
+        }
         let exit: i32 = self.read("exit")?.ok_or("no exit")?.trim().parse()?;
         if output.status.code() != Some(exit) {
             differences.push(format!(

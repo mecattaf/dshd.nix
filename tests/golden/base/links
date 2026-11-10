@@ -8,8 +8,3 @@ state/dshd/old/current %RELEASE%
 state/dshd/old/booted %RELEASE%
 state/dshd/broken/current %RELEASE%
 state/dshd/broken/booted %RELEASE%
-dsh/profiles/web@web-1 %ROOT%/state/dshd/web-1/profile
-dsh/profiles/acp@review %ROOT%/state/dshd/review/profile
-dsh/profiles/headless@batch %ROOT%/state/dshd/batch/profile
-dsh/profiles/web@old %ROOT%/state/dshd/old/profile
-dsh/profiles/headless@broken %ROOT%/state/dshd/broken/profile

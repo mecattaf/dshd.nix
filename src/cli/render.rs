@@ -132,7 +132,7 @@ pub(super) fn entry_of(report: &StatusReport) -> ListEntry {
         state: report.state,
         transport: report.transport,
         profile: report.profile.as_ref().map(|profile| profile.name.clone()),
-        patches: report
+        profile_patches: report
             .profile
             .as_ref()
             .map(|profile| profile.patches.clone())
@@ -354,7 +354,7 @@ mod tests {
             state,
             transport: Some(Transport::Web),
             profile: Some("web".to_owned()),
-            patches: Vec::new(),
+            profile_patches: Vec::new(),
             release: Some("dsh-0.2.2-rc.1".to_owned()),
             release_state: Some(release_state),
             enabled: false,

@@ -44,7 +44,7 @@
   takes before the app's arguments are part of the recorded argv, so every
   start applies them, a different overlay under an existing name is
   `exists-different-recipe`, and `get` shows them as `profile.patches`.
-  Each `ls` entry shows `profile` and `patches`.
+  Each `ls` entry shows them as `profile` and `profilePatches`.
 - `run --patch FILE`, repeatable: dshd snapshots each overlay (a regular
   file of at most 1 MiB) into `%S/dshd/NAME/patches/` at creation, records
   its sha256 in the recipe and hands `dsh` the copy after the profile at

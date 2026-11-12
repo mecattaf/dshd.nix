@@ -109,12 +109,9 @@ impl Word {
             Self::Wait => &["--timeout", "--json", "--text"],
             Self::Attach => &["--via", "--open", "--print-url", "--takeover", "--json"],
             Self::Help => &[],
-            Self::Restart
-            | Self::Ls
-            | Self::Get
-            | Self::Label
-            | Self::Enable
-            | Self::Disable => &["--json", "--text"],
+            Self::Restart | Self::Ls | Self::Get | Self::Label | Self::Enable | Self::Disable => {
+                &["--json", "--text"]
+            }
         }
     }
 }

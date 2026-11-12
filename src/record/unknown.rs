@@ -19,6 +19,9 @@ impl InstanceRecord {
                 &variable.unrecognized,
             );
         }
+        for (index, patch) in self.patches.iter().enumerate() {
+            append(&mut keys, &format!("patches[{index}]"), &patch.unrecognized);
+        }
         keys
     }
 }

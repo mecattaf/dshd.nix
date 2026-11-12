@@ -35,6 +35,22 @@ fn usage_cases() -> Vec<(Error, &'static str, u8)> {
         ),
         (Error::CreateWithRun("web".into()), "invalid-argument", 2),
         (Error::PathPinned("x".into()), "invalid-argument", 2),
+        (
+            Error::PatchUnreadable {
+                path: "p.yml".into(),
+                reason: "no such file".into(),
+            },
+            "invalid-argument",
+            2,
+        ),
+        (
+            Error::StdinUnreadable {
+                path: "-".into(),
+                reason: "larger than 1 MiB".into(),
+            },
+            "invalid-argument",
+            2,
+        ),
         (Error::NotFound("x".into()), "not-found", 3),
         (Error::ReleaseNotFound("x".into()), "release-not-found", 3),
     ]
@@ -62,6 +78,7 @@ fn state_cases() -> Vec<(Error, &'static str, u8)> {
         (Error::TaskAlreadyRan("x".into()), "task-already-ran", 4),
         (Error::UnitMasked("x".into()), "unit-masked", 4),
         (Error::NotRunning("x".into()), "not-running", 5),
+        (other_invocation(Some("v"), true), "not-running", 5),
         (
             Error::AttachedElsewhere("x".into()),
             "attached-elsewhere",
@@ -172,6 +189,8 @@ fn known_variant(error: &Error) {
         | Error::NeedsTarget { .. }
         | Error::CreateWithRun(_)
         | Error::PathPinned(_)
+        | Error::PatchUnreadable { .. }
+        | Error::StdinUnreadable { .. }
         | Error::NotFound(_)
         | Error::ReleaseNotFound(_)
         | Error::ReleaseInvalid { .. }
@@ -180,6 +199,7 @@ fn known_variant(error: &Error) {
         | Error::TaskAlreadyRan(_)
         | Error::UnitMasked(_)
         | Error::NotRunning(_)
+        | Error::OtherInvocation(_)
         | Error::AttachedElsewhere(_)
         | Error::UnsupportedTransport { .. }
         | Error::UnsupportedProfile { .. }
@@ -249,6 +269,42 @@ fn cause_specific_hints() {
         "stop: no NAME given, and no instance exists"
     );
     assert_eq!(needs(None), "stop needs the NAME of an instance");
+}
+
+fn other_invocation(found: Option<&str>, up: bool) -> Error {
+    Error::OtherInvocation(Box::new(OtherInvocation {
+        name: "fence".into(),
+        expected: "e".into(),
+        found: found.map(Into::into),
+        up,
+    }))
+}
+
+// catches: a compare-and-stop refusal that hides which run the unit holds, or whose remedy is a
+// start or a stop, either of which acts on a run the caller does not own
+#[test]
+fn other_invocation_names_what_runs() {
+    let shown = |found, up| other_invocation(found, up).to_string();
+    assert_eq!(
+        shown(Some("v"), true),
+        "fence is not running invocation e: it runs v"
+    );
+    assert_eq!(
+        shown(Some("v"), false),
+        "fence is not running invocation e: its last run was v"
+    );
+    assert_eq!(
+        shown(None, false),
+        "fence is not running invocation e: it has no recorded run"
+    );
+    assert_eq!(
+        shown(None, true),
+        "fence is not running invocation e: systemd names no invocation for what it runs"
+    );
+    assert_eq!(
+        other_invocation(None, true).hint().as_deref(),
+        Some("dshd get fence")
+    );
 }
 
 // catches: an error type grown past the clippy result_large_err threshold

@@ -1,0 +1,12 @@
+run
+--json
+--name
+batch
+--release
+%RELEASE%
+--label
+agency=elsewhere
+--
+headless
+-p
+summarise the work directory

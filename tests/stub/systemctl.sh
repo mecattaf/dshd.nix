@@ -20,6 +20,9 @@
 # makes daemon-reload fail. FAKE_EXIT=N makes start
 # and restart end the run at once as dsh exiting N would, and record that
 # end in the instance's last-run.json as the runner's post-stop step does.
+# FAKE_COLLECT=1 with FAKE_EXIT=0 also unloads the ended unit at once, as
+# the manager does with an inactive unit nothing references: later queries
+# show it as never run.
 
 set -u
 
@@ -66,7 +69,7 @@ record_exit() {
 	served=success
 	[ "$2" = 0 ] || served=exit-code
 	boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || boot=unknown
-	printf '{"id":"","releasePath":"","bootId":"%s","startedAt":1794009610,"invocationId":"0123456789abcdef0123456789abcdef","end":{"endedAt":1794013210,"serviceResult":"%s","exitCode":"exited","exitStatus":"%s","child":{"exitCode":%s},"stopIntent":false,"stopSignal":null}}\n' \
+	printf '{"id":"","releasePath":"","bootId":"%s","startedAt":1794009610,"invocationId":"0123456789abcdef0123456789abcdef","end":{"endedAt":1794013210,"serviceResult":"%s","exitCode":"exited","exitStatus":"%s","child":{"exitCode":%s},"stopIntent":false,"stopSignal":null,"resources":{"cpuUsageNSec":2500000000,"memoryPeak":73400320,"ioReadBytes":null,"ioWriteBytes":null}}}\n' \
 		"$boot" "$served" "$2" "$2" >"$dir/last-run.json"
 }
 
@@ -204,6 +207,7 @@ start | restart)
 	if [ -n "${FAKE_EXIT:-}" ]; then
 		set_state "${1-}" "exited $FAKE_EXIT"
 		record_exit "${1-}" "$FAKE_EXIT"
+		[ "${FAKE_COLLECT:-}" != 1 ] || [ "$FAKE_EXIT" != 0 ] || rm -f "$units/${1-}"
 		exit 0
 	fi
 	set_state "${1-}" running

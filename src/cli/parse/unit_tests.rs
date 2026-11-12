@@ -88,12 +88,24 @@ fn lifecycle_arguments_parse() {
         })
     );
     let one = |n: &str| NameArgs { name: name(n) };
-    assert_eq!(verb(&["stop", "a"]), Verb::Stop(one("a")));
+    assert_eq!(
+        verb(&["stop", "a"]),
+        Verb::Stop(StopArgs {
+            name: name("a"),
+            invocation: None
+        })
+    );
     assert_eq!(verb(&["restart", "a"]), Verb::Restart(one("a")));
     assert_eq!(verb(&["get", "a"]), Verb::Get(one("a")));
     assert_eq!(verb(&["enable", "a"]), Verb::Enable(one("a")));
     assert_eq!(verb(&["disable", "a"]), Verb::Disable(one("a")));
-    assert_eq!(verb(&["rm", "a"]), Verb::Rm(one("a")));
+    assert_eq!(
+        verb(&["rm", "a"]),
+        Verb::Rm(RmArgs {
+            name: name("a"),
+            invocation: None
+        })
+    );
     assert_eq!(
         verb(&["update", "-R", "a"]),
         Verb::Update(UpdateArgs {
@@ -121,6 +133,7 @@ fn read_wait_attach_arguments_parse() {
         Verb::Read(ReadArgs {
             name: name("a"),
             lines: READ_DEFAULT_LINES,
+            head: false,
             follow: false
         })
     );
@@ -129,6 +142,7 @@ fn read_wait_attach_arguments_parse() {
         Verb::Read(ReadArgs {
             name: name("a"),
             lines: 5,
+            head: false,
             follow: true
         })
     );
@@ -137,6 +151,7 @@ fn read_wait_attach_arguments_parse() {
         Verb::Read(ReadArgs {
             name: name("a"),
             lines: 7,
+            head: false,
             follow: false
         })
     );
@@ -175,6 +190,62 @@ fn read_wait_attach_arguments_parse() {
     assert_eq!(verb(&["attach", "--print-url", "a"]), Verb::Attach(web));
 }
 
+// catches: --head read as the newest lines, combined with -n or --follow, or
+// taken by a verb other than read; journalctl's -n +N read as the newest N
+#[test]
+fn read_head_parses() {
+    assert_eq!(
+        verb(&["read", "--head", "50", "a"]),
+        Verb::Read(ReadArgs {
+            name: name("a"),
+            lines: 50,
+            head: true,
+            follow: false
+        })
+    );
+    assert_eq!(
+        verb(&["read", "--json", "--head=0", "a"]),
+        Verb::Read(ReadArgs {
+            name: name("a"),
+            lines: 0,
+            head: true,
+            follow: false
+        })
+    );
+    for (args, message) in [
+        (
+            &["read", "--head", "5", "-n", "5", "a"][..],
+            "-n and --head exclude each other",
+        ),
+        (
+            &["read", "-f", "--head", "5", "a"],
+            "--head and --follow exclude each other",
+        ),
+        (
+            &["read", "--head", "first", "a"],
+            "--head takes a number of lines, not first",
+        ),
+        (
+            &["read", "--head", "1", "--head", "2", "a"],
+            "--head given twice",
+        ),
+        (&["get", "--head", "5", "a"], "get does not take --head"),
+        (
+            &["read", "-n", "+5", "a"],
+            "-n counts the newest lines; for the oldest 5: --head 5",
+        ),
+        (
+            &["read", "--lines=+1", "a"],
+            "-n counts the newest lines; for the oldest 1: --head 1",
+        ),
+    ] {
+        let error = parse(os(args)).unwrap_err();
+        assert_eq!(error.kind(), "invalid-argument", "{args:?}");
+        assert_eq!(error.to_string(), message, "{args:?}");
+    }
+    assert_eq!(exit(&["read", "--head", "a"]), 2);
+}
+
 // catches: labels, help or agent discovery parsed as the wrong verb or arguments
 #[test]
 fn labels_and_discovery_arguments_parse() {
@@ -210,6 +281,70 @@ fn dsh_argv_is_verbatim() {
             ..RunArgs::default()
         })
     );
+}
+
+// catches: an invocation id not kept as the 32 lowercase hex digits get prints, one that is not
+// an id accepted, or --invocation taken by a verb other than stop and rm
+#[test]
+fn stop_invocation_parses() {
+    let id = "0123456789abcdef0123456789abcdef";
+    let fenced = Verb::Stop(StopArgs {
+        name: name("a"),
+        invocation: Some(id.into()),
+    });
+    assert_eq!(verb(&["stop", "--invocation", id, "a"]), fenced);
+    let upper = format!("--invocation={}", id.to_ascii_uppercase());
+    assert_eq!(verb(&["stop", &upper, "--json", "a"]), fenced);
+    let short = "0123456789abcdef0123456789abcde";
+    let long = format!("{id}0");
+    let dashed = "01234567-89ab-cdef-0123-456789abcdef";
+    for bad in ["", "z123456789abcdef0123456789abcdef", short, &long, dashed] {
+        assert_eq!(
+            kind(&["stop", "--invocation", bad, "a"]),
+            "invalid-argument",
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        parse(os(&["stop", "--invocation=", "a"]))
+            .unwrap_err()
+            .to_string(),
+        "invalid --invocation \"\": an invocation id is 32 hex digits, as dshd get prints it"
+    );
+    assert_eq!(
+        exit(&["stop", "--invocation", id, "--invocation", id, "a"]),
+        2
+    );
+    assert_eq!(
+        exit(&["stop", "--invocation", "a"]),
+        2,
+        "the NAME is taken as the id"
+    );
+    for other in ["restart", "start", "get", "update"] {
+        assert_eq!(
+            parse(os(&[other, "--invocation", id, "a"]))
+                .unwrap_err()
+                .to_string(),
+            format!("{other} does not take --invocation")
+        );
+    }
+}
+
+// catches: rm dropping --invocation, so a compare-and-remove removes an instance whatever run it
+// last held, or rm taking an id stop would refuse
+#[test]
+fn rm_invocation_parses() {
+    let id = "0123456789abcdef0123456789abcdef";
+    let upper = format!("--invocation={}", id.to_ascii_uppercase());
+    assert_eq!(
+        verb(&["rm", &upper, "--json", "a"]),
+        Verb::Rm(RmArgs {
+            name: name("a"),
+            invocation: Some(id.into()),
+        })
+    );
+    assert_eq!(kind(&["rm", "--invocation", "a1", "a"]), "invalid-argument");
+    assert_eq!(exit(&["rm", "--invocation", id]), 2, "the id is not a NAME");
 }
 
 // catches: a bad flag, a flag on the wrong verb or a stray word accepted instead of exit 2

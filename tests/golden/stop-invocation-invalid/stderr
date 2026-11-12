@@ -1,0 +1,2 @@
+dshd: invalid --invocation "12345": an invocation id is 32 hex digits, as dshd get prints it
+  remedy: dshd help

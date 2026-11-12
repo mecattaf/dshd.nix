@@ -1,0 +1,2 @@
+dshd: --patch needs a file
+  remedy: dshd help

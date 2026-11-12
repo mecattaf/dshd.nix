@@ -1,0 +1,4 @@
+Created dshd instance long.
+systemctl --user start dshd@long.service
+long: running(stub-dsh-golden)
+Follow with: dshd read --follow long

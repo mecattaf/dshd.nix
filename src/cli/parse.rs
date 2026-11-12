@@ -13,7 +13,7 @@ use lexopt::{Arg, Parser};
 use super::render;
 use crate::cli::{
     AttachArgs, DEFAULT_TIMEOUT_SECS, LabelArgs, LsArgs, NameArgs, READ_DEFAULT_LINES, ReadArgs,
-    RunArgs, StartArgs, UpdateArgs, Verb, WaitArgs,
+    RmArgs, RunArgs, StartArgs, StopArgs, UpdateArgs, Verb, WaitArgs,
 };
 use crate::error::Error;
 use crate::name::InstanceName;
@@ -97,24 +97,22 @@ impl Word {
                 "--release",
                 "--cwd",
                 "--label",
+                "--patch",
+                "--stdin",
                 "--timeout",
                 "--json",
                 "--text",
             ],
             Self::Start => &["--rerun", "--json", "--text"],
+            Self::Stop | Self::Rm => &["--invocation", "--json", "--text"],
             Self::Update => &["--restart", "--json", "--text"],
-            Self::Read => &["--lines", "--follow", "--json"],
+            Self::Read => &["--lines", "--head", "--follow", "--json"],
             Self::Wait => &["--timeout", "--json", "--text"],
             Self::Attach => &["--via", "--open", "--print-url", "--takeover", "--json"],
             Self::Help => &[],
-            Self::Stop
-            | Self::Restart
-            | Self::Ls
-            | Self::Get
-            | Self::Label
-            | Self::Enable
-            | Self::Disable
-            | Self::Rm => &["--json", "--text"],
+            Self::Restart | Self::Ls | Self::Get | Self::Label | Self::Enable | Self::Disable => {
+                &["--json", "--text"]
+            }
         }
     }
 }
@@ -130,9 +128,13 @@ struct Raw {
     release: Option<OsString>,
     cwd: Option<OsString>,
     labels: Vec<OsString>,
+    patches: Vec<OsString>,
+    stdin: Option<OsString>,
     lines: Option<OsString>,
+    head: Option<OsString>,
     timeout: Option<OsString>,
     via: Option<OsString>,
+    invocation: Option<OsString>,
 }
 
 impl Raw {
@@ -208,6 +210,14 @@ fn lex(head: Vec<OsString>) -> Result<Raw, Error> {
                 raw.mark("--label", false)?;
                 raw.labels.push(value(&mut parser)?);
             }
+            Arg::Long("patch") => {
+                raw.mark("--patch", false)?;
+                raw.patches.push(value(&mut parser)?);
+            }
+            Arg::Long("stdin") => {
+                raw.mark("--stdin", true)?;
+                raw.stdin = Some(value(&mut parser)?);
+            }
             Arg::Long("timeout") => {
                 raw.mark("--timeout", true)?;
                 raw.timeout = Some(value(&mut parser)?);
@@ -218,9 +228,17 @@ fn lex(head: Vec<OsString>) -> Result<Raw, Error> {
                 raw.mark("--lines", true)?;
                 raw.lines = Some(value(&mut parser)?);
             }
+            Arg::Long("head") => {
+                raw.mark("--head", true)?;
+                raw.head = Some(value(&mut parser)?);
+            }
             Arg::Long("via") => {
                 raw.mark("--via", true)?;
                 raw.via = Some(value(&mut parser)?);
+            }
+            Arg::Long("invocation") => {
+                raw.mark("--invocation", true)?;
+                raw.invocation = Some(value(&mut parser)?);
             }
             Arg::Long("open") => raw.mark("--open", true)?,
             Arg::Long("print-url") => raw.mark("--print-url", true)?,
@@ -276,12 +294,18 @@ fn build(raw: Raw, tail: Option<Vec<OsString>>) -> Result<Verb, Error> {
             name: one_name(verb, rest)?,
             rerun: raw.has("--rerun"),
         })),
-        Word::Stop => named(rest).map(Verb::Stop),
+        Word::Stop => Ok(Verb::Stop(StopArgs {
+            name: one_name(verb, rest)?,
+            invocation: raw.invocation.map(invocation).transpose()?,
+        })),
         Word::Restart => named(rest).map(Verb::Restart),
         Word::Get => named(rest).map(Verb::Get),
         Word::Enable => named(rest).map(Verb::Enable),
         Word::Disable => named(rest).map(Verb::Disable),
-        Word::Rm => named(rest).map(Verb::Rm),
+        Word::Rm => Ok(Verb::Rm(RmArgs {
+            name: one_name(verb, rest)?,
+            invocation: raw.invocation.map(invocation).transpose()?,
+        })),
         Word::Update => Ok(Verb::Update(UpdateArgs {
             name: one_name(verb, rest)?,
             restart: raw.has("--restart"),
@@ -358,11 +382,21 @@ fn run(raw: Raw, rest: Vec<OsString>, tail: Option<Vec<OsString>>) -> Result<Run
         })?),
         None => None,
     };
+    if raw.patches.iter().any(|patch| patch.is_empty()) {
+        return Err(Error::InvalidArgument("--patch needs a file".into()));
+    }
+    if raw.stdin.as_ref().is_some_and(|stdin| stdin.is_empty()) {
+        return Err(Error::InvalidArgument(
+            "--stdin needs a file, or - for dshd's own stdin".into(),
+        ));
+    }
     Ok(RunArgs {
         name: raw.name.map(name_arg).transpose()?,
         release,
         cwd: raw.cwd.map(PathBuf::from),
         labels: labels("--label ", raw.labels)?,
+        patches: raw.patches.into_iter().map(PathBuf::from).collect(),
+        stdin: raw.stdin.map(PathBuf::from),
         bg,
         timeout: seconds(raw.timeout.as_deref())?,
         argv,
@@ -420,27 +454,53 @@ fn label(rest: Vec<OsString>) -> Result<LabelArgs, Error> {
 }
 
 fn read(raw: &Raw, rest: Vec<OsString>) -> Result<ReadArgs, Error> {
-    let lines = match &raw.lines {
-        Some(value) => value
-            .to_str()
-            .and_then(|text| text.parse::<u32>().ok())
-            .ok_or_else(|| {
+    let (flag, given) = match (&raw.lines, &raw.head) {
+        (Some(_), Some(_)) => {
+            return Err(Error::InvalidArgument(
+                "-n and --head exclude each other".into(),
+            ));
+        }
+        (Some(value), None) => ("-n", Some(value)),
+        (None, Some(value)) => ("--head", Some(value)),
+        (None, None) => ("-n", None),
+    };
+    let lines = match given {
+        Some(value) => {
+            let count = value.to_str().and_then(|text| text.parse::<u32>().ok());
+            // journalctl reads `-n +N` as the oldest N lines; dshd's is --head.
+            if flag == "-n"
+                && let Some(count) = count
+                && value.to_str().is_some_and(|text| text.starts_with('+'))
+            {
+                return Err(Error::InvalidArgument(format!(
+                    "-n counts the newest lines; for the oldest {count}: --head {count}"
+                )));
+            }
+            count.ok_or_else(|| {
                 Error::InvalidArgument(format!(
-                    "-n takes a number of lines, not {}",
+                    "{flag} takes a number of lines, not {}",
                     OsText::new(value).display()
                 ))
-            })?,
+            })?
+        }
         None => READ_DEFAULT_LINES,
     };
+    let head = raw.head.is_some();
     let follow = raw.has("--follow");
     if follow && raw.has("--json") {
         return Err(Error::InvalidArgument(
             "read --follow prints text; read --json prints the lines once".into(),
         ));
     }
+    if follow && head {
+        return Err(Error::InvalidArgument(
+            "--head and --follow exclude each other".into(),
+        ));
+    }
     Ok(ReadArgs {
         name: one_name("read", rest)?,
         lines,
+        head,
         follow,
     })
 }
@@ -458,6 +518,20 @@ fn seconds(value: Option<&OsStr>) -> Result<u64, Error> {
                     OsText::new(value).display()
                 ))
             }),
+    }
+}
+
+/// `--invocation ID`: a systemd invocation id, 32 hex digits as `get`
+/// prints them, kept in lowercase.
+fn invocation(value: OsString) -> Result<String, Error> {
+    match value.to_str() {
+        Some(id) if id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
+            Ok(id.to_ascii_lowercase())
+        }
+        _ => Err(Error::InvalidArgument(format!(
+            "invalid --invocation {:?}: an invocation id is 32 hex digits, as dshd get prints it",
+            OsText::new(value).display()
+        ))),
     }
 }
 

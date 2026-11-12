@@ -1,0 +1,3 @@
+dshd: batch exists with a different recipe:
+  args: stored ["headless", "-p", "summarise the work directory"], requested ["headless", "--patch", "pair.yml", "-p", "summarise the work directory"]
+  remedy: dshd rm batch

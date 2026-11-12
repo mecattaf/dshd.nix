@@ -5,7 +5,7 @@ use std::path::Path;
 
 use super::{
     CHILD_END_FILE, EXIT_CODE, EXIT_CONFIG, EXIT_STATUS, INVOCATION_ID, PRIVATE_MODE, Place,
-    RunnerEnd, SERVICE_RESULT, log_line, unit_value,
+    RunnerEnd, SERVICE_RESULT, cgroup, log_line, unit_value,
 };
 use crate::error::Error;
 use crate::record::{LastRun, OsText, RunEnd};
@@ -70,6 +70,7 @@ fn record_last_run(place: &Place) -> Result<(), Error> {
         child: seen.as_ref().map(|seen| seen.child),
         stop_intent: fsx::kind(&place.runtime.stop_intent())?.is_some(),
         stop_signal: seen.and_then(|seen| seen.stop_signal),
+        resources: Some(cgroup::consumed()),
         unrecognized: serde_json::Map::new(),
     });
     fsx::write_json_atomic(&path, &run, PRIVATE_MODE)

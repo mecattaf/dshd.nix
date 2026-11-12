@@ -5,7 +5,7 @@
 
 use std::ffi::OsString;
 use std::fs::{self, DirBuilder, File, FileType, Metadata, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -70,6 +70,41 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), Error> {
 /// Reads a whole file as text. A missing file is `Ok(None)`.
 pub fn read_text(path: &Path) -> Result<Option<String>, Error> {
     absent_as_none(fs::read_to_string(path), "read", path)
+}
+
+/// What [`read_bounded`] found at a path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bounded {
+    /// A regular file of at most the limit: its bytes.
+    File(Vec<u8>),
+    /// Not a regular file: a directory, a socket, a device...
+    NotRegular,
+    /// A regular file larger than the limit.
+    TooLarge,
+}
+
+/// Reads a regular file of at most `limit` bytes, links followed. The kind
+/// is checked before the open, so a FIFO is never opened, and again on the
+/// open file; the read stops one byte past the limit, so a file that grows
+/// meanwhile is refused, not read whole. A missing or unreadable path is
+/// an `io` error naming it.
+pub fn read_bounded(path: &Path, limit: u64) -> Result<Bounded, Error> {
+    let regular = |metadata: &Metadata| metadata.is_file();
+    if !regular(&fs::metadata(path).map_err(|e| Error::io("stat", path, e))?) {
+        return Ok(Bounded::NotRegular);
+    }
+    let file = File::open(path).map_err(|e| Error::io("open", path, e))?;
+    if !regular(&file.metadata().map_err(|e| Error::io("stat", path, e))?) {
+        return Ok(Bounded::NotRegular);
+    }
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| Error::io("read", path, e))?;
+    if u64::try_from(bytes.len()).map_or(true, |read| read > limit) {
+        return Ok(Bounded::TooLarge);
+    }
+    Ok(Bounded::File(bytes))
 }
 
 /// Reads a symlink target. A missing link is `Ok(None)`.

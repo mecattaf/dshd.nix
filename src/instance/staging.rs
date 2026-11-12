@@ -45,7 +45,10 @@ pub(super) fn build(
     }
 }
 
-/// Fills the staging directory: `instance.json` with a fresh id.
+/// Fills the staging directory: the `--patch` snapshots under `patches/`
+/// (0700, each file 0600) and the `--stdin` snapshot `stdin` (0600), then
+/// `instance.json` with a fresh id. All are renamed into place with the
+/// directory, so a recipe never names a snapshot that is not there.
 fn stage(
     staging: &InstanceDir,
     name: &InstanceName,
@@ -55,6 +58,8 @@ fn stage(
         release,
         cwd,
         args,
+        patches,
+        stdin,
         environment,
         profile,
         transport,
@@ -62,12 +67,27 @@ fn stage(
         ..
     } = request;
     fsx::create_dir_private(staging.path())?;
+    if !patches.is_empty() {
+        fsx::create_dir_private(&staging.patches())?;
+    }
+    for source in &patches {
+        fsx::write_atomic(
+            &staging.patch(&source.patch.file),
+            &source.bytes,
+            RECORD_MODE,
+        )?;
+    }
+    if let Some(source) = &stdin {
+        fsx::write_atomic(&staging.stdin(), &source.bytes, RECORD_MODE)?;
+    }
     let record = InstanceRecord {
         id: new_id()?,
         name: name.as_str().to_owned(),
         release: release.name,
         cwd: OsText::new(cwd),
         args: args.into_iter().map(OsText::from).collect(),
+        patches: patches.into_iter().map(|source| source.patch).collect(),
+        stdin: stdin.map(|source| source.stdin),
         environment,
         profile,
         transport,

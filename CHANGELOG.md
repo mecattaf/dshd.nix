@@ -20,12 +20,79 @@
 - A headless task runs once: a foreground `run` prints its output and
   exits as `dsh` did, `wait` and `read` pick it up later, and only
   `start --rerun` submits the prompt again.
+- `read`, `run` and `wait` join a line journald broke at its `LineMax`
+  (48K by default, marked `_LINE_BREAK=line-max`), so a line DSH wrote,
+  such as a long `--json` event, is one line of the output and one
+  element of `read --json`'s `lines`, and `-n` and `--head` count those
+  lines. They read the journal as `-o json` for that mark. No record and
+  no output shape changes.
+- `read --head N` prints the oldest N lines of the current or last run
+  instead of the newest, in one journal query, so a supervisor finds what
+  a run printed at its start without reading the whole run. `complete`
+  now means the lines are the whole run so far, which for `-n` is what it
+  meant before; with `--head` it is false while newer lines follow, and
+  stderr says so. `--head` excludes `-n` and `--follow`
+  (`invalid-argument`). No record and no output shape changes.
+- `wait`, and `run --json`, follow the run's journal from now
+  (`journalctl -f -n 0`) instead of from its first line, since they print
+  none of it: `wait --timeout S` in a loop no longer reads the whole run
+  on every call. A text `run` still prints the run from its start. A
+  follower from now that starts after the runner's last line was written
+  finds the recorded end, or the unit down, by looking while its journal
+  is silent (first after 0.1 s, then at most every 5 s), and so does
+  `read --follow`, which could wait for ever there. No record and no
+  output shape changes.
+- `run --stdin FILE` gives a headless `dsh` its stdin, so a task larger
+  than one argument (128 KiB on Linux) goes in as DSH's task `-`. dshd
+  snapshots FILE, or with `--stdin -` its own stdin (at most 1 MiB), into
+  `%S/dshd/NAME/stdin` at creation, records its sha256 in the recipe as
+  `stdin`, and gives every start that copy as stdin; other input under the
+  same name is `exists-different-recipe`, and a start refuses a copy that
+  changed. A profile that selects web or acp refuses `--stdin`
+  (`invalid-argument`). Without it a headless `dsh` reads `/dev/null` as
+  before and the record is written as it always was. No output shape
+  changes.
 - Each run records how it ended (`stopped`, `stopped-without-intent`,
   `exited`, `failed`, `interrupted`), from the stop intent dshd writes
   before it stops an instance; a unit the user masked shows as `masked`.
+- `stop --invocation ID` stops only the run of that systemd invocation: a
+  unit on another invocation, running or last, is refused with
+  `not-running` and left as it is, so a supervisor never stops a newer run
+  under the same name. The comparison and the stop hold the instance
+  lock, which dshd's own starts take. No record changes, and the error
+  vocabulary is unchanged.
+- `rm --invocation ID` removes an instance only when its last run was ID:
+  another invocation, running or last, or none is refused with
+  `not-running`, a unit still running ID with `instance-running`, and
+  nothing is removed. The comparison and the removal hold the root and
+  instance locks. No record changes, and the error vocabulary is
+  unchanged.
 - Native accounting counters under `get.resources`, with lane history
   available directly from journald lifecycle records.
-- Labels on instances, set by `run --label` and `label`.
+- Labels on instances, set by `run --label` and `label`; each `ls` entry
+  shows them. `run` sets them on an existing instance only once it started
+  or runs already, so a run refused as `task-already-ran` or `unit-masked`,
+  or one whose start fails, leaves them as they were.
+- A run's own profile and overlays: the `--patch` flags DSH's launcher
+  takes before the app's arguments are part of the recorded argv, so every
+  start applies them, a different overlay under an existing name is
+  `exists-different-recipe`, and `get` shows them as `profile.patches`.
+  Each `ls` entry shows them as `profile` and `profilePatches`.
+- `run --patch FILE`, repeatable: dshd snapshots each overlay (a regular
+  file of at most 1 MiB) into `%S/dshd/NAME/patches/` at creation, records
+  its sha256 in the recipe and hands `dsh` the copy after the profile at
+  every start. A changed overlay under an existing name is
+  `exists-different-recipe`, a start refuses a copy whose content no longer
+  matches, and `get` shows the snapshots as `patches`. Instances made
+  without `--patch` keep their record byte for byte.
+- `run` warns about a profile that lists more than one app bundle, since
+  DSH mounts every bundle a profile lists in one process.
+- An ended run keeps its totals: `poststop` records the CPU time, peak
+  memory and IO bytes of the unit's cgroup in `last-run.json`, and the
+  status object shows them as `lastRun.resources`. Once the manager
+  unloads an ended unit, `since` falls back to `lastRun.endedAt`.
+- `run` refuses a `--patch` launcher flag with an empty value, which every
+  start of the instance would fail on.
 - `dshd-run`, the per-release runner: spawns `dsh` with the recorded argv,
   working directory and environment, reports readiness to systemd, keeps a
   web instance's origin and default port, and relays an ACP instance's stdio to one
@@ -60,3 +127,7 @@
   `instance.json` and in the reports is the argv as typed, without a
   rewritten `--profile`. A record with `composition` is refused as
   unknown: remove the instance with `dshd rm NAME` and run it again.
+- **Breaking:** `read -n +N` is refused (`invalid-argument`) with a
+  pointer to `--head N`. It used to read as `-n N`, the newest N lines,
+  where journalctl's `-n +N` means the oldest; `--head N` is dshd's
+  spelling for those.

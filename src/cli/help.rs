@@ -54,14 +54,28 @@ const FROM_INSIDE: &str =
     "Run from inside the instance, the command ends with the instance, and systemd
 still completes the action; dshd get NAME from outside shows the result.";
 
-const RUN: &str = r"Usage: dshd run [--bg] [--name NAME] [--release RELEASE] [--cwd DIR] [--label KEY=VALUE]... [--timeout SECONDS] [--json | --text] -- DSH ARGUMENTS
+const RUN: &str = r"Usage: dshd run [--bg] [--name NAME] [--release RELEASE] [--cwd DIR] [--label KEY=VALUE]... [--patch FILE]... [--stdin FILE] [--timeout SECONDS] [--json | --text] -- DSH ARGUMENTS
 
 Creates an instance that runs `dsh DSH ARGUMENTS` in DIR with this shell's
 environment, as the unit dshd@NAME, and starts it. A NAME that exists with
-the same recipe is started and its labels are set; one with a different
-recipe is refused. The recipe is the directory, the arguments, the profile
-and the transport, and the release when --release is given. An instance
-that runs already is reported, not restarted.
+the same recipe is started and then its labels are set, so a run that is
+refused or fails to start leaves them as they were; one with a different
+recipe is refused. The recipe is the directory, the arguments, the profile,
+the transport, the content of each --patch FILE and of --stdin FILE, and
+the release when --release is given. An instance that runs already is reported, not
+restarted.
+
+--patch FILE copies FILE into the instance at creation; every start hands
+dsh that copy with --patch right after the profile, before the --patch
+flags in DSH ARGUMENTS, and FILE is never read again. A relative FILE is
+read from the current directory, not from --cwd; dsh resolves a --patch in
+DSH ARGUMENTS against --cwd.
+
+--stdin FILE copies FILE, or with - this command's own stdin, into a
+headless instance at creation; every start gives dsh that copy as its
+stdin, which dsh reads as the task when the task is -. A task larger than
+one argument (128 KiB on Linux) goes in this way. Without --stdin, dsh's
+stdin is /dev/null.
 
 dsh runs the profile as it is in its DSH home at every start. dshd only
 reads the profile's bundles, which fix the transport at creation; a shipped
@@ -81,6 +95,10 @@ start --rerun NAME does that on purpose.
                       default: default
   --cwd DIR           working directory; default: the current directory
   --label KEY=VALUE   metadata shown by get and ls; KEY matches [a-z0-9._-]+
+  --patch FILE        an overlay to snapshot, a regular file of at most 1 MiB;
+                      repeatable, applied in order
+  --stdin FILE        a headless dsh's stdin to snapshot, a regular file of at
+                      most 1 MiB, or - for this command's stdin
   --timeout SECONDS   how long a foreground run follows its task; default 180
   --json, --text      the output format";
 
@@ -97,11 +115,23 @@ submits the recorded prompt again; --rerun does that on purpose.
   --rerun          run a headless instance's task again
   --json, --text   the output format";
 
-const STOP: &str = r"Usage: dshd stop [--json | --text] NAME
+const STOP: &str = r"Usage: dshd stop [--invocation ID] [--json | --text] NAME
 
 Stops dshd@NAME and every process it started, tool children included. The
 recipe, the release roots and DSH's own sessions stay; dshd start NAME
-starts the instance again.";
+starts the instance again.
+
+--invocation ID stops only the run of that systemd invocation, the id
+dshd get NAME shows as invocationId or lastRun.invocationId: the unit is
+stopped while it runs ID, and already-stopped when it is stopped and its
+last run was ID. A unit on another invocation, running or last, and an
+instance that never ran are refused with not-running, and nothing is
+stopped. dshd's own starts of NAME wait until the comparison and the stop
+are done; a restart systemd makes after a crash, or a start from outside
+dshd, is not fenced.
+
+  --invocation ID  the 32 hex digits of the run to stop
+  --json, --text   the output format";
 
 const RESTART: &str = r"Usage: dshd restart [--json | --text] NAME
 
@@ -134,14 +164,18 @@ const GET: &str = r"Usage: dshd get [--json | --text] NAME
 The unit, the recorded recipe and profile, the release links, the web
 address or the ACP relay, how the last run ended, and whether linger is on.";
 
-const READ: &str = r#"Usage: dshd read [-n LINES] [-f] [--json] NAME
+const READ: &str = r#"Usage: dshd read [-n LINES | --head LINES] [-f] [--json] NAME
 
 Prints the journal of the instance's current run, or of its last one, as
-dsh wrote it. When the lines do not reach back to the start of the run, a
-note on stderr says so. The journal of an acp instance holds dsh's stderr
-only: its stdout is the ACP channel.
+dsh wrote it: its newest lines, or with --head its first ones. When the
+lines are not the whole run, because they do not reach back to its start
+or newer lines follow them, a note on stderr says so and complete is
+false. The journal of an acp instance holds dsh's stderr only: its stdout
+is the ACP channel.
 
-  -n, --lines LINES   lines to show; default 200
+  -n, --lines LINES   newest lines to show; default 200; journalctl's -n +N
+                      is refused: that is --head N
+  --head LINES        the oldest LINES lines instead, from the run's start
   -f, --follow        keep printing new lines until the run ends
   --json              {"name","invocationId","complete","streams","lines"}"#;
 
@@ -151,7 +185,8 @@ Waits until the instance's current run ends, then exits as dsh did: with its
 own exit code, or 128+S when signal S ended it. A run that ended already is
 reported at once. At --timeout wait exits 124 and the instance continues.
 As JSON it exits 0, with the outcome ended or still-running and the fields
-exitCode, signal and reason.
+exitCode, signal and reason. wait reads only the journal lines written while
+it waits, so waiting in slices never reads the run again.
 
   --timeout SECONDS   how long to wait; default 180
   --json, --text      the output format";
@@ -191,11 +226,21 @@ const DISABLE: &str = r"Usage: dshd disable [--json | --text] NAME
 
 Removes dshd@NAME from dshd.target. Stops nothing.";
 
-const RM: &str = r"Usage: dshd rm [--json | --text] NAME
+const RM: &str = r"Usage: dshd rm [--invocation ID] [--json | --text] NAME
 
 Deletes a stopped instance: its state directory and its release roots,
 which the next garbage collection may then free. The profile and DSH's own
-sessions stay.";
+sessions stay.
+
+--invocation ID removes the instance only when its last run was ID, the id
+dshd get NAME shows as invocationId or lastRun.invocationId. A unit that
+runs another invocation, or is stopped after another run or none, is
+refused with not-running, and a unit that still runs ID with
+instance-running; nothing is removed. dshd's own starts of NAME wait until
+the comparison and the removal are done.
+
+  --invocation ID  the 32 hex digits of the last run
+  --json, --text   the output format";
 
 const HELP: &str = r"Usage: dshd help [VERB]
 
@@ -246,7 +291,7 @@ mod tests {
     use std::io;
 
     use super::*;
-    use crate::error::{RecipeDifference, StartFailure, ToolFailure, UnheldApp};
+    use crate::error::{OtherInvocation, RecipeDifference, StartFailure, ToolFailure, UnheldApp};
 
     /// The agent guide, which names the same verbs.
     const SKILL: &str = include_str!("skill.md");
@@ -260,7 +305,11 @@ mod tests {
         }))
     }
 
-    /// One value of every variant, so a new variant without a row fails here.
+    /// One value of every variant, so the tests below see every kind and
+    /// hint. Nothing here fails on a new variant: `known_variant` in
+    /// `error/unit_tests.rs` stops compiling until it is named, and its row
+    /// belongs here too.
+    #[expect(clippy::too_many_lines, reason = "one value per error variant")]
     fn every_error() -> Vec<Error> {
         let name = || "x".to_owned();
         vec![
@@ -274,6 +323,14 @@ mod tests {
                 candidates: None,
             },
             Error::CreateWithRun(name()),
+            Error::PatchUnreadable {
+                path: name(),
+                reason: name(),
+            },
+            Error::StdinUnreadable {
+                path: name(),
+                reason: name(),
+            },
             Error::PathPinned(name()),
             Error::NotFound(name()),
             Error::ReleaseNotFound(name()),
@@ -289,6 +346,12 @@ mod tests {
             Error::TaskAlreadyRan(name()),
             Error::UnitMasked(name()),
             Error::NotRunning(name()),
+            Error::OtherInvocation(Box::new(OtherInvocation {
+                name: name(),
+                expected: name(),
+                found: None,
+                up: false,
+            })),
             Error::AttachedElsewhere(name()),
             Error::UnsupportedTransport {
                 name: name(),

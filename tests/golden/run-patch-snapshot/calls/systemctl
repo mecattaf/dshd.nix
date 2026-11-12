@@ -1,0 +1,2 @@
+--user reset-failed dshd@snap.service
+--user start dshd@snap.service

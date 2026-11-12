@@ -1,7 +1,8 @@
 //! The launch recipe, as pure functions: finding the profile native argv
-//! selects by DSH's launcher grammar, the web flag injection, environment
-//! capture with the closed exclusion list, and the ordered composition of
-//! the child environment at every start.
+//! selects by DSH's launcher grammar, the injection of the `--patch`
+//! snapshots and of the web flags, environment capture with the closed
+//! exclusion list, and the ordered composition of the child environment at
+//! every start.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -124,17 +125,35 @@ const PWD: &str = "PWD";
 /// DSH's home under the user's home when `DSH_HOME` is blank.
 const DEFAULT_DSH_HOME: &str = ".dsh";
 
-/// The profile native argv selects, by DSH's launcher grammar: a first
-/// token not starting with `-` is the profile word; otherwise the leading
-/// `--profile V|--profile=V` and `--patch V|--patch=V` flags are scanned up
-/// to the first other token. The argv itself is dsh's, recorded as typed.
+/// What native argv selects, by DSH's launcher grammar: the profile and the
+/// `--patch` overlays DSH applies after the profile layer, in argv order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Selection {
+    /// The profile name.
+    pub profile: String,
+    /// The `--patch` values as typed; DSH resolves them against the
+    /// instance's working directory at every start.
+    pub patches: Vec<OsString>,
+}
+
+/// The profile native argv selects. See [`selection`].
+pub fn selected_profile(argv: &[OsString]) -> Result<String, Error> {
+    selection(argv).map(|selection| selection.profile)
+}
+
+/// The profile and the patch overlays native argv selects, by DSH's
+/// launcher grammar: a first token not starting with `-` is the profile
+/// word; otherwise the leading `--profile V|--profile=V` and
+/// `--patch V|--patch=V` flags are scanned up to the first other token,
+/// after the profile word too. The argv itself is dsh's, recorded as typed.
 ///
 /// Refuses (invalid-argument) what cannot be a held session: no profile,
 /// a profile selected twice, the word `plugin`, a profile that is not one
-/// directory name, `--from-default-profile`, and the flags that print and
-/// exit (`--dump-*`, `-V`, `--version`).
-pub fn selected_profile(argv: &[OsString]) -> Result<String, Error> {
+/// directory name, a `--patch` without a file, `--from-default-profile`,
+/// and the flags that print and exit (`--dump-*`, `-V`, `--version`).
+pub fn selection(argv: &[OsString]) -> Result<Selection, Error> {
     let mut profile = None;
+    let mut patches = Vec::new();
     let mut index = 0;
     if let Some(word) = argv
         .first()
@@ -164,15 +183,67 @@ pub fn selected_profile(argv: &[OsString]) -> Result<String, Error> {
                 .ok_or_else(|| refuse(format!("{flag} needs a value")))?
                 .as_os_str()
         };
+        if flag == PATCH_FLAG && value.is_empty() {
+            return Err(refuse(format!("{flag} needs a file")));
+        }
         if flag == PROFILE_FLAG {
             if profile.is_some() {
                 return Err(refuse("the profile is selected twice".to_owned()));
             }
             profile = Some(profile_name(value)?);
+        } else {
+            patches.push(value.to_owned());
         }
         index += 1;
     }
-    profile.ok_or_else(|| refuse("no profile: give a profile word or --profile NAME".to_owned()))
+    let profile = profile
+        .ok_or_else(|| refuse("no profile: give a profile word or --profile NAME".to_owned()))?;
+    Ok(Selection { profile, patches })
+}
+
+/// Inserts `--patch SNAPSHOT` for each snapshot, in order, directly after
+/// the profile the argv selects (the profile word, or `--profile V`), so
+/// DSH applies them after the profile's own layer and before every
+/// `--patch` typed in the argv: the typed overlays win. When a typed
+/// `--patch` comes before `--profile V`, the snapshots go before it, for
+/// the same reason. Done at every start, like the web flags.
+pub fn insert_patches(args: &mut Vec<OsString>, snapshots: &[PathBuf]) {
+    if snapshots.is_empty() {
+        return;
+    }
+    let rest = args.split_off(patch_position(args).min(args.len()));
+    args.extend(
+        snapshots
+            .iter()
+            .flat_map(|snapshot| [OsString::from(PATCH_FLAG), snapshot.as_os_str().to_owned()]),
+    );
+    args.extend(rest);
+}
+
+/// Where [`insert_patches`] puts the snapshots: after the profile word,
+/// or after `--profile V` unless a typed `--patch` comes first.
+fn patch_position(args: &[OsString]) -> usize {
+    if args
+        .first()
+        .is_some_and(|token| !token.as_bytes().starts_with(b"-"))
+    {
+        return 1;
+    }
+    let mut index = 0;
+    let mut typed_patch = None;
+    while let Some(token) = args.get(index) {
+        let (flag, inline) = split_flag(token);
+        let width = if inline.is_some() { 1 } else { 2 };
+        match flag {
+            Some(PROFILE_FLAG) => return typed_patch.unwrap_or(index + width),
+            Some(PATCH_FLAG) => {
+                typed_patch.get_or_insert(index);
+            }
+            _ => break,
+        }
+        index += width;
+    }
+    typed_patch.unwrap_or(index)
 }
 
 /// For a web instance: appends `--no-open` unless present, and `--port N`

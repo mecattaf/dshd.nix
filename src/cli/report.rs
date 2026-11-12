@@ -83,6 +83,22 @@ pub struct ProfileReport {
     pub name: String,
     /// The DSH home the profile lives in.
     pub dsh_home: String,
+    /// The `--patch` overlays the recorded argv gives, in order, as typed.
+    /// DSH reads them from their paths at every start; dshd's own
+    /// snapshots are the status object's `patches`.
+    pub patches: Vec<String>,
+}
+
+/// One `run --patch` snapshot in a status object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchReport {
+    /// File name under `%S/dshd/NAME/patches/`.
+    pub file: String,
+    /// Lowercase hex sha256 of the snapshot, part of the recipe.
+    pub sha256: String,
+    /// The path it was read from at creation; never read again.
+    pub source: String,
 }
 
 /// The `web` block of a status object.
@@ -116,6 +132,11 @@ pub struct LastRunReport {
     pub exit_status: Option<String>,
     /// The `dsh` child's own end.
     pub child: Option<ChildEnd>,
+    /// What the run consumed, recorded at its end; the counters of
+    /// `resources` that describe a moment, `memoryCurrent` and
+    /// `tasksCurrent`, are always null here. Null until the end is
+    /// recorded, and for an end an older dshd recorded.
+    pub resources: Option<crate::systemctl::Resources>,
     /// The run happened under the current boot.
     pub this_boot: bool,
 }
@@ -143,11 +164,15 @@ pub struct StatusReport {
     pub main_pid: Option<u32>,
     /// `NRestarts`.
     pub restarts: u32,
-    /// Native resource counters, null where accounting is unavailable.
+    /// Native resource counters, null where accounting is unavailable or
+    /// the manager no longer holds the unit.
     pub resources: crate::systemctl::Resources,
-    /// Current `InvocationID`, while running.
+    /// The manager's `InvocationID`: the run in progress, or the last one
+    /// while the manager still holds the unit. Null once it unloaded an
+    /// ended unit; `lastRun.invocationId` still names that run.
     pub invocation_id: Option<String>,
-    /// Unix seconds the unit entered its current state.
+    /// Unix seconds the unit entered its current state; for an ended unit
+    /// the manager no longer holds, when its last run ended.
     pub since: Option<u64>,
     /// `enabled`: wanted by `dshd.target`.
     pub enabled: bool,
@@ -167,6 +192,10 @@ pub struct StatusReport {
     pub release: Option<ReleaseReport>,
     /// Profile block.
     pub profile: Option<ProfileReport>,
+    /// The `run --patch` overlays dshd snapshotted at creation, in the
+    /// order dsh gets them: after the profile, before the `--patch`
+    /// overlays typed in the argv (`profile.patches`).
+    pub patches: Vec<PatchReport>,
     /// Web block, for web instances.
     pub web: Option<WebReport>,
     /// Relay block, for acp instances, when the probe answered.
@@ -187,6 +216,11 @@ pub struct ListEntry {
     pub state: StateSlug,
     /// Recorded transport.
     pub transport: Option<Transport>,
+    /// Recorded profile name.
+    pub profile: Option<String>,
+    /// The `--patch` overlays of the recorded argv, the status object's
+    /// `profile.patches`.
+    pub profile_patches: Vec<String>,
     /// Release label.
     pub release: Option<String>,
     /// Release state.
@@ -197,6 +231,8 @@ pub struct ListEntry {
     pub since: Option<u64>,
     /// Remedy command, when an action is needed.
     pub remedy: Option<String>,
+    /// Labels, as the status object has them.
+    pub labels: BTreeMap<String, String>,
 }
 
 /// `ls`: every instance, one object.

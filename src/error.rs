@@ -40,6 +40,21 @@ pub enum Error {
     CreateWithRun(String),
     /// `update` on an instance created from a release store path.
     PathPinned(String),
+    /// `run --patch PATH` names no readable regular file of at most 1 MiB.
+    PatchUnreadable {
+        /// The path as given.
+        path: String,
+        /// Why it cannot be snapshotted.
+        reason: String,
+    },
+    /// `run --stdin FILE` names no readable regular file (or stdin) of at
+    /// most 1 MiB.
+    StdinUnreadable {
+        /// The path as given, `-` for dshd's own stdin.
+        path: String,
+        /// Why it cannot be snapshotted.
+        reason: String,
+    },
     /// No such instance.
     NotFound(String),
     /// No such release in the registry.
@@ -62,6 +77,10 @@ pub enum Error {
     UnitMasked(String),
     /// The verb needs the instance running.
     NotRunning(String),
+    /// `stop --invocation ID` or `rm --invocation ID`: the unit runs
+    /// another invocation, or it is stopped and its last run was another
+    /// one or none.
+    OtherInvocation(Box<OtherInvocation>),
     /// Another controller holds the ACP relay.
     AttachedElsewhere(String),
     /// The instance's transport does not support the requested connection.
@@ -139,6 +158,21 @@ pub struct RecipeDifference {
     pub fields: Vec<(&'static str, String, String)>,
 }
 
+/// What `stop --invocation` or `rm --invocation` found instead of the run
+/// it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtherInvocation {
+    /// The instance.
+    pub name: String,
+    /// The invocation `--invocation` named.
+    pub expected: String,
+    /// The unit's current invocation while it is up, else its last one;
+    /// `None` when there is none to name.
+    pub found: Option<String>,
+    /// The unit is up, so `found` is the run it holds now.
+    pub up: bool,
+}
+
 /// A tool ran and exited non-zero.
 #[derive(Debug)]
 pub struct ToolFailure {
@@ -170,9 +204,11 @@ impl Error {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::InvalidName { .. } => "invalid-name",
-            Self::InvalidArgument(_) | Self::CreateWithRun(_) | Self::PathPinned(_) => {
-                "invalid-argument"
-            }
+            Self::InvalidArgument(_)
+            | Self::CreateWithRun(_)
+            | Self::PathPinned(_)
+            | Self::PatchUnreadable { .. }
+            | Self::StdinUnreadable { .. } => "invalid-argument",
             Self::NeedsTarget { .. } => "needs-target",
             Self::NotFound(_) => "not-found",
             Self::ReleaseNotFound(_) => "release-not-found",
@@ -181,7 +217,7 @@ impl Error {
             Self::InstanceRunning(_) => "instance-running",
             Self::TaskAlreadyRan(_) => "task-already-ran",
             Self::UnitMasked(_) => "unit-masked",
-            Self::NotRunning(_) => "not-running",
+            Self::NotRunning(_) | Self::OtherInvocation(_) => "not-running",
             Self::AttachedElsewhere(_) => "attached-elsewhere",
             Self::UnsupportedTransport { .. } => "unsupported-transport",
             Self::UnsupportedProfile { .. } => "unsupported-profile",
@@ -210,14 +246,16 @@ impl Error {
             | Self::InvalidArgument(_)
             | Self::NeedsTarget { .. }
             | Self::CreateWithRun(_)
-            | Self::PathPinned(_) => 2,
+            | Self::PathPinned(_)
+            | Self::PatchUnreadable { .. }
+            | Self::StdinUnreadable { .. } => 2,
             Self::NotFound(_) | Self::ReleaseNotFound(_) => 3,
             Self::ExistsDifferentRecipe(_)
             | Self::InstanceRunning(_)
             | Self::TaskAlreadyRan(_)
             | Self::UnitMasked(_)
             | Self::AttachedElsewhere(_) => 4,
-            Self::NotRunning(_) => 5,
+            Self::NotRunning(_) | Self::OtherInvocation(_) => 5,
             Self::UnsupportedTransport { .. }
             | Self::UnsupportedProfile { .. }
             | Self::AutostartNotAllowed(_) => 6,
@@ -243,6 +281,7 @@ impl Error {
             Self::InvalidArgument(_) => Some("dshd help".into()),
             Self::NeedsTarget { .. } | Self::NotFound(_) => Some("dshd ls".into()),
             Self::CreateWithRun(argv) => Some(format!("dshd run --bg -- {argv}")),
+            Self::PatchUnreadable { .. } | Self::StdinUnreadable { .. } => Some("dshd help run".into()),
             Self::ReleaseNotFound(_) => Some("ls /etc/dshd/releases".into()),
             Self::PathPinned(name) | Self::InconsistentState { name, .. } => Some(format!("dshd rm {name}")),
             Self::ExistsDifferentRecipe(diff) => Some(format!("dshd rm {}", diff.name)),
@@ -250,6 +289,7 @@ impl Error {
             Self::TaskAlreadyRan(name) => Some(format!("dshd start --rerun {name}")),
             Self::UnitMasked(unit) => Some(format!("systemctl --user unmask {unit}")),
             Self::NotRunning(name) | Self::AutostartNotAllowed(name) => Some(format!("dshd start {name}")),
+            Self::OtherInvocation(other) => Some(format!("dshd get {}", other.name)),
             Self::AttachedElsewhere(name) => Some(format!("dshd attach --takeover {name}")),
             Self::UnsupportedTransport { name, transport: "none" } => Some(format!("dshd read --follow {name}")),
             Self::UnsupportedTransport { name, .. } => Some(format!("dshd attach {name}")),
@@ -296,6 +336,8 @@ impl fmt::Display for Error {
                 f,
                 "{name} is pinned to a release path; remove it, then run it again with --release RELEASE"
             ),
+            Self::PatchUnreadable { path, reason } => write!(f, "--patch {path}: {reason}"),
+            Self::StdinUnreadable { path, reason } => write!(f, "--stdin {path}: {reason}"),
             Self::NotFound(name) => write!(f, "no instance named {name}"),
             Self::ReleaseNotFound(name) => write!(f, "no release named {name}"),
             Self::ReleaseInvalid { release, reason } => {
@@ -311,6 +353,7 @@ impl fmt::Display for Error {
             }
             Self::UnitMasked(unit) => write!(f, "{unit} is masked, so systemd will not start it"),
             Self::NotRunning(name) => write!(f, "{name} is not running"),
+            Self::OtherInvocation(other) => write!(f, "{other}"),
             Self::AttachedElsewhere(name) => write!(f, "{name} already has a controller attached"),
             Self::UnsupportedTransport {
                 name,
@@ -389,6 +432,24 @@ impl fmt::Display for RecipeDifference {
             write!(f, "\n  {field}: stored {stored}, requested {requested}")?;
         }
         Ok(())
+    }
+}
+
+impl fmt::Display for OtherInvocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            name,
+            expected,
+            found,
+            up,
+        } = self;
+        write!(f, "{name} is not running invocation {expected}: ")?;
+        match (found, up) {
+            (Some(found), true) => write!(f, "it runs {found}"),
+            (None, true) => f.write_str("systemd names no invocation for what it runs"),
+            (Some(found), false) => write!(f, "its last run was {found}"),
+            (None, false) => f.write_str("it has no recorded run"),
+        }
     }
 }
 

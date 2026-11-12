@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use crate::error::{Error, RecipeDifference};
 use crate::fsx::{self, Lock};
 use crate::name::{self, InstanceDir, InstanceName, LOCK_FILE, MAX_LEN, StateRoot};
-use crate::record::{EnvVar, InstanceRecord, LastRun, OsText, ProfileRef, Transport};
+use crate::record::{
+    EnvVar, InstanceRecord, LastRun, OsText, ProfileRef, RunPatch, RunStdin, Transport,
+};
 use crate::release::{self, Release};
 use crate::tool::Tool;
 
@@ -38,6 +40,10 @@ pub struct CreateRequest {
     pub cwd: PathBuf,
     /// Native argv as typed.
     pub args: Vec<OsString>,
+    /// The `--patch` overlays as read, in the order given.
+    pub patches: Vec<PatchSource>,
+    /// The `--stdin` content as read, for a headless instance.
+    pub stdin: Option<StdinSource>,
     /// Captured environment after the closed list and `unsetEnvironment`.
     pub environment: Vec<EnvVar>,
     /// The profile and its DSH home.
@@ -46,6 +52,24 @@ pub struct CreateRequest {
     pub transport: Transport,
     /// Labels, without empty values.
     pub labels: BTreeMap<String, String>,
+}
+
+/// One `run --patch` overlay as read at creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchSource {
+    /// How the record names it: snapshot file, digest, the path as given.
+    pub patch: RunPatch,
+    /// The bytes read, which the snapshot holds.
+    pub bytes: Vec<u8>,
+}
+
+/// The `run --stdin` content as read at creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StdinSource {
+    /// How the record names it: digest and the path as given.
+    pub stdin: RunStdin,
+    /// The bytes read, which the snapshot holds.
+    pub bytes: Vec<u8>,
 }
 
 /// The instance directories on disk.
@@ -208,10 +232,12 @@ pub fn discover(root: &StateRoot) -> Result<Discovery, Error> {
 }
 
 /// Compares a stored record with a request. `None` when equal in cwd,
-/// args, profile and transport, and in the release name when the request
-/// gave one. The environment and the labels are not part of the recipe:
-/// the environment is captured once, at creation, and labels are set on
-/// any match.
+/// args, profile and transport, in the ordered digests of the `--patch`
+/// snapshots, in the digest of the `--stdin` snapshot, and in the release
+/// name when the request gave one. The environment, the labels and the
+/// paths the overlays and stdin were read from are not part of the recipe:
+/// the environment is captured once, at creation, labels are set on any
+/// match, and an overlay or stdin is its content.
 fn compare_recipe(stored: &InstanceRecord, request: &CreateRequest) -> Option<RecipeDifference> {
     let mut fields = Vec::new();
     let cwd = OsText::new(request.cwd.as_os_str());
@@ -228,6 +254,28 @@ fn compare_recipe(stored: &InstanceRecord, request: &CreateRequest) -> Option<Re
             show_profile(&stored.profile),
             show_profile(&request.profile),
         ));
+    }
+    let stored_digests: Vec<&str> = stored.patches.iter().map(|p| p.sha256.as_str()).collect();
+    let requested_digests: Vec<&str> = request
+        .patches
+        .iter()
+        .map(|source| source.patch.sha256.as_str())
+        .collect();
+    if stored_digests != requested_digests {
+        fields.push((
+            "patches",
+            show_digests(&stored_digests),
+            show_digests(&requested_digests),
+        ));
+    }
+    let stored_stdin = stored.stdin.as_ref().map(|stdin| stdin.sha256.as_str());
+    let requested_stdin = request
+        .stdin
+        .as_ref()
+        .map(|source| source.stdin.sha256.as_str());
+    if stored_stdin != requested_stdin {
+        let show = |digest: Option<&str>| digest.map_or_else(|| "none".to_owned(), short_digest);
+        fields.push(("stdin", show(stored_stdin), show(requested_stdin)));
     }
     if stored.transport != request.transport {
         fields.push((
@@ -424,6 +472,17 @@ fn numbered(word: &str, k: u64) -> String {
 fn show_args(args: &[OsText]) -> String {
     let shown: Vec<String> = args.iter().map(OsText::display).collect();
     format!("{shown:?}")
+}
+
+/// Digests as their file names carry them: the first 16 hex digits.
+fn show_digests(digests: &[&str]) -> String {
+    let shown: Vec<String> = digests.iter().map(|digest| short_digest(digest)).collect();
+    format!("{shown:?}")
+}
+
+/// The first 16 hex digits of a digest, as a recipe difference shows it.
+fn short_digest(digest: &str) -> String {
+    digest.chars().take(16).collect()
 }
 
 fn show_profile(profile: &ProfileRef) -> String {

@@ -84,6 +84,12 @@ pub(super) fn status_page(report: &StatusReport) -> String {
     if let Some(profile) = &report.profile {
         page.field("profile", &profile_text(profile));
     }
+    for patch in &report.patches {
+        page.field(
+            &format!("patch {}", patch.file),
+            &format!("sha256 {} from {}", patch.sha256, patch.source),
+        );
+    }
     if let Some(web) = &report.web {
         let url = web
             .url
@@ -100,6 +106,16 @@ pub(super) fn status_page(report: &StatusReport) -> String {
     }
     if let Some(run) = &report.last_run {
         page.field("last run", &last_run_text(run));
+        if let Some(consumed) = &run.resources {
+            for (name, value) in [
+                ("last run cpu ns", consumed.cpu_usage_nsec),
+                ("last run memory peak bytes", consumed.memory_peak),
+                ("last run io read bytes", consumed.io_read_bytes),
+                ("last run io write bytes", consumed.io_write_bytes),
+            ] {
+                page.optional(name, value);
+            }
+        }
     }
     page.0.join("\n")
 }
@@ -115,11 +131,18 @@ pub(super) fn entry_of(report: &StatusReport) -> ListEntry {
         name: report.name.clone(),
         state: report.state,
         transport: report.transport,
+        profile: report.profile.as_ref().map(|profile| profile.name.clone()),
+        profile_patches: report
+            .profile
+            .as_ref()
+            .map(|profile| profile.patches.clone())
+            .unwrap_or_default(),
         release: report.release.as_ref().map(|release| release.label.clone()),
         release_state: report.release.as_ref().map(|release| release.state),
         enabled: report.enabled,
         since: report.since,
         remedy: report.remedy.clone(),
+        labels: report.labels.clone(),
     }
 }
 
@@ -167,7 +190,12 @@ fn release_lines(page: &mut Page, release: &ReleaseReport) {
 }
 
 fn profile_text(profile: &ProfileReport) -> String {
-    format!("{} in {}", profile.name, profile.dsh_home)
+    let mut text = format!("{} in {}", profile.name, profile.dsh_home);
+    if !profile.patches.is_empty() {
+        text.push_str(", patches: ");
+        text.push_str(&profile.patches.join(", "));
+    }
+    text
 }
 
 fn acp_lines(page: &mut Page, acp: &ProbeLine) {
@@ -303,6 +331,7 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 mod tests {
     use super::*;
     use crate::record::Transport;
+    use std::collections::BTreeMap;
 
     /// `text` without colour escapes, whatever the test's stdout is.
     fn plain(text: &str) -> String {
@@ -324,11 +353,14 @@ mod tests {
             name: "web-1".to_owned(),
             state,
             transport: Some(Transport::Web),
+            profile: Some("web".to_owned()),
+            profile_patches: Vec::new(),
             release: Some("dsh-0.2.2-rc.1".to_owned()),
             release_state: Some(release_state),
             enabled: false,
             since: None,
             remedy: remedy.map(str::to_owned),
+            labels: BTreeMap::new(),
         }
     }
 
@@ -380,6 +412,7 @@ mod tests {
             exit_code: None,
             exit_status: None,
             child: None,
+            resources: None,
             this_boot: true,
         };
         assert_eq!(

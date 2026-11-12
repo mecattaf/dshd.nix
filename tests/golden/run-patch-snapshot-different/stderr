@@ -1,0 +1,3 @@
+dshd: snap exists with a different recipe:
+  patches: stored ["fdf9ee7ee24114d3", "b4132faa2bfec915"], requested ["0d600847dd63d23d", "b4132faa2bfec915"]
+  remedy: dshd rm snap

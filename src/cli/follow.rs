@@ -1,7 +1,14 @@
 //! Following one run: `journalctl --user _SYSTEMD_INVOCATION_ID=ID -f`
-//! read on a thread, printed or not, until the runner's last line or a
-//! deadline; then one look at the unit decides whether the run ended,
-//! and `last-run.json` says how. `run`, `wait` and `read --follow` share it.
+//! read on a thread, its entries joined into dsh's lines, printed or not,
+//! until the runner's last line or a deadline; then one look at the unit
+//! decides whether the run ended, and `last-run.json` says how. `run`, `wait` and `read --follow` share it.
+//!
+//! A follower that prints the run reads it from its first line. One that
+//! prints nothing (`wait`, `run --json`) and `read --follow` read only the
+//! lines written from now on, so a `wait` in slices never reads the run
+//! again. Such a follower can start after the runner's last line was
+//! written; while its journal is silent it looks at the recorded end and
+//! the unit, first soon, then every [`LAST_LOOK`] at most.
 
 use std::io::{BufRead, BufReader};
 use std::process::Stdio;
@@ -9,6 +16,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::journal::{self, Entry, Joiner};
 use super::lifecycle;
 use super::status;
 use crate::cli::Context;
@@ -39,9 +47,18 @@ pub(super) enum Since {
     Now,
 }
 
+/// How long a follower from now lets its journal stay silent before it
+/// first looks whether the run ended without it; the wait doubles up to
+/// [`LAST_LOOK`].
+const FIRST_LOOK: Duration = Duration::from_millis(100);
+
+/// The longest silence between two looks of a follower from now.
+const LAST_LOOK: Duration = Duration::from_secs(5);
+
 /// Follows the instance's current run, printing its lines when `print`,
 /// until the run ends or `timeout` seconds pass, and concludes. A run that
-/// is no longer up when `print` is off concludes at once.
+/// is no longer up when `print` is off concludes at once. Printing follows
+/// from the run's first line; otherwise only new lines are read.
 pub(super) fn until_end(
     ctx: &Context,
     instance: &Instance,
@@ -55,14 +72,8 @@ pub(super) fn until_end(
     };
     let finished = if print || status::unit_up(&facts) {
         let deadline = Instant::now() + Duration::from_secs(timeout);
-        journal(
-            ctx,
-            instance,
-            &followed,
-            print,
-            Since::Start,
-            Some(deadline),
-        )?
+        let since = if print { Since::Start } else { Since::Now };
+        journal(ctx, instance, &followed, print, since, Some(deadline))?
     } else {
         JournalEnd::Recorded
     };
@@ -137,7 +148,10 @@ pub(super) fn invocation(facts: &UnitFacts, instance: &Instance) -> Result<Optio
 
 /// Follows the journal of invocation `id` until the runner's last line,
 /// the end of journalctl's output, or `deadline`. Lines are printed on
-/// stdout when `print`. journalctl is killed before this returns.
+/// stdout when `print`. From [`Since::Now`], a silent journal also ends
+/// once the run's end is recorded or the unit is down, which covers a run
+/// that ended before journalctl started reading. journalctl is killed
+/// before this returns.
 pub(super) fn journal(
     ctx: &Context,
     instance: &Instance,
@@ -157,7 +171,7 @@ pub(super) fn journal(
         Since::Now => command.args(["-n", "0"]),
     };
     command
-        .args(["-o", "cat"])
+        .args(journal::OUTPUT)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
     let mut child = command
@@ -171,8 +185,12 @@ pub(super) fn journal(
             std::io::Error::from(std::io::ErrorKind::BrokenPipe),
         )),
     };
-    let pumped =
-        lines.and_then(|lines| pump(&lines, print, deadline, || recorded_end(ctx, instance, id)));
+    let look = (since == Since::Now).then_some(FIRST_LOOK);
+    let pumped = lines.and_then(|lines| {
+        pump(&lines, print, deadline, look, || {
+            recorded_end(ctx, instance, id)
+        })
+    });
     // journalctl -f never ends by itself; whether it ended already does not matter.
     drop(child.kill());
     drop(child.wait());
@@ -196,22 +214,29 @@ fn recorded_end(ctx: &Context, instance: &Instance, id: &str) -> Result<Option<J
     }
 }
 
-/// Reads `stdout` line by line on a thread. Bytes that are not UTF-8 are
-/// replaced, as the journal shows them.
+/// Reads journalctl's entries from `stdout` on a thread and sends the lines
+/// they make, a line journald broke at `LineMax` joined again; a broken
+/// line the output ends inside is sent as far as it goes. Bytes that are
+/// not UTF-8 are replaced, as the journal shows them.
 fn read_lines(stdout: impl std::io::Read + Send + 'static) -> Result<Receiver<String>, Error> {
     let (sender, receiver) = mpsc::channel();
     let spawned = thread::Builder::new()
         .name("journal".to_owned())
         .spawn(move || {
-            for line in BufReader::new(stdout).split(b'\n') {
-                let Ok(line) = line else {
+            let mut joiner = Joiner::default();
+            for entry in BufReader::new(stdout).split(b'\n') {
+                let Ok(entry) = entry else {
                     break;
                 };
-                if sender
-                    .send(String::from_utf8_lossy(&line).into_owned())
-                    .is_err()
-                {
-                    break;
+                for line in joiner.push(Entry::parse(&entry)) {
+                    if sender.send(line).is_err() {
+                        return;
+                    }
+                }
+            }
+            for line in joiner.finish() {
+                if sender.send(line).is_err() {
+                    return;
                 }
             }
         });
@@ -222,26 +247,41 @@ fn read_lines(stdout: impl std::io::Read + Send + 'static) -> Result<Receiver<St
 }
 
 /// Prints lines until the runner's last line, the end of the output, or
-/// the deadline.
+/// the deadline. With `look`, a silence that long asks `ended` too, and
+/// each later silence twice as long, up to [`LAST_LOOK`].
 fn pump(
     lines: &Receiver<String>,
     print: bool,
     deadline: Option<Instant>,
+    mut look: Option<Duration>,
     mut ended: impl FnMut() -> Result<Option<JournalEnd>, Error>,
 ) -> Result<JournalEnd, Error> {
     loop {
         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return Ok(JournalEnd::Timeout);
         }
-        let received = match deadline {
-            Some(deadline) => {
-                lines.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            }
+        let wake = match (deadline, look) {
+            (Some(deadline), Some(look)) => Some(deadline.min(Instant::now() + look)),
+            (Some(deadline), None) => Some(deadline),
+            (None, Some(look)) => Some(Instant::now() + look),
+            (None, None) => None,
+        };
+        let received = match wake {
+            Some(wake) => lines.recv_timeout(wake.saturating_duration_since(Instant::now())),
             None => lines.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
         let line = match received {
             Ok(line) => line,
-            Err(RecvTimeoutError::Timeout) => return Ok(JournalEnd::Timeout),
+            Err(RecvTimeoutError::Timeout) => {
+                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    return Ok(JournalEnd::Timeout);
+                }
+                if let Some(end) = ended()? {
+                    return Ok(end);
+                }
+                look = look.map(|look| look.saturating_mul(2).min(LAST_LOOK));
+                continue;
+            }
             Err(RecvTimeoutError::Disconnected) => return Ok(JournalEnd::Closed),
         };
         if print {
@@ -353,7 +393,10 @@ mod tests {
             sender.send(line).unwrap();
         }
         assert_eq!(
-            pump(&receiver, false, None, || Ok(Some(JournalEnd::Recorded))).unwrap(),
+            pump(&receiver, false, None, None, || Ok(Some(
+                JournalEnd::Recorded
+            )))
+            .unwrap(),
             JournalEnd::Recorded
         );
         assert_eq!(
@@ -363,7 +406,7 @@ mod tests {
         );
         drop(sender);
         assert_eq!(
-            pump(&receiver, false, None, || Ok(None)).unwrap(),
+            pump(&receiver, false, None, None, || Ok(None)).unwrap(),
             JournalEnd::Closed
         );
     }
@@ -374,7 +417,67 @@ mod tests {
         let (_sender, receiver) = mpsc::channel();
         let deadline = Instant::now() + Duration::from_millis(30);
         assert_eq!(
-            pump(&receiver, false, Some(deadline), || Ok(None)).unwrap(),
+            pump(&receiver, false, Some(deadline), None, || Ok(None)).unwrap(),
+            JournalEnd::Timeout
+        );
+    }
+
+    // catches: a follower from now that started after the runner's last line waiting out its
+    // deadline (or forever, as read --follow), looking before the journal fell silent, or looking
+    // when it follows from the start
+    #[test]
+    fn a_silent_follower_from_now_looks_for_the_end() {
+        let (sender, receiver) = mpsc::channel();
+        let mut looks = 0;
+        assert_eq!(
+            pump(
+                &receiver,
+                false,
+                None,
+                Some(Duration::from_millis(5)),
+                || {
+                    looks += 1;
+                    Ok((looks == 3).then_some(JournalEnd::Recorded))
+                }
+            )
+            .unwrap(),
+            JournalEnd::Recorded
+        );
+        assert_eq!(looks, 3, "a look that found no end stops nothing");
+        sender.send("working".to_owned()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut looked = false;
+        assert_eq!(
+            pump(
+                &receiver,
+                false,
+                Some(deadline),
+                Some(Duration::from_millis(5)),
+                || {
+                    looked = true;
+                    Ok(Some(JournalEnd::Replaced))
+                }
+            )
+            .unwrap(),
+            JournalEnd::Replaced
+        );
+        assert!(looked);
+        assert!(Instant::now() < deadline, "the deadline was waited out");
+        let deadline = Instant::now() + Duration::from_millis(30);
+        assert_eq!(
+            pump(&receiver, false, Some(deadline), None, || panic!("looked")).unwrap(),
+            JournalEnd::Timeout
+        );
+        let deadline = Instant::now() + Duration::from_millis(30);
+        assert_eq!(
+            pump(
+                &receiver,
+                false,
+                Some(deadline),
+                Some(Duration::from_secs(60)),
+                || { panic!("looked before the journal fell silent") }
+            )
+            .unwrap(),
             JournalEnd::Timeout
         );
     }
@@ -387,7 +490,7 @@ mod tests {
         sender.send("the task is still running".to_owned()).unwrap();
         let deadline = Instant::now() + Duration::from_millis(30);
         assert_eq!(
-            pump(&receiver, false, Some(deadline), || Ok(None)).unwrap(),
+            pump(&receiver, false, Some(deadline), None, || Ok(None)).unwrap(),
             JournalEnd::Timeout
         );
         assert!(

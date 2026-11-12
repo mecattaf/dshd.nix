@@ -12,20 +12,21 @@ use std::thread;
 
 use super::render;
 use crate::cli::report::{
-    LastRunReport, Outcome, OutcomeSlug, ProfileReport, ReleaseReport, RunExit, StateSlug,
-    StatusReport, WebReport,
+    LastRunReport, Outcome, OutcomeSlug, PatchReport, ProfileReport, ReleaseReport, RunExit,
+    StateSlug, StatusReport, WebReport,
 };
 use crate::cli::{Context, NameArgs};
 use crate::error::Error;
 use crate::fsx;
 use crate::instance::{self, Instance};
+use crate::launch;
 use crate::name::{self, InstanceName, RuntimeDir};
 use crate::out;
 use crate::record::{LastRun, OsText, Transport};
 use crate::relay::{self, protocol::ProbeLine};
 use crate::release::{self, ReleaseState};
 use crate::runner::web;
-use crate::systemctl::{self, ActiveState, LoadState, Task, UnitFacts, UnitResult};
+use crate::systemctl::{self, ActiveState, LoadState, Resources, Task, UnitFacts, UnitResult};
 use crate::tool::Tool;
 
 /// A report and what only the human page adds to it.
@@ -185,6 +186,9 @@ pub(super) fn gather(
     report.remedy = remedy;
     report.release = release.map(|(release, _)| release);
     report.last_run = last_run.map(|run| last_run_report(run, boot, unit_up(facts)));
+    if report.since.is_none() && ended(state) {
+        report.since = report.last_run.as_ref().and_then(|run| run.ended_at);
+    }
     let mut probe_failure = None;
     if let Some(instance) = &instance {
         fill_recipe(&mut report, instance);
@@ -399,11 +403,22 @@ fn bare_report(
         labels: BTreeMap::new(),
         release: None,
         profile: None,
+        patches: Vec::new(),
         web: None,
         acp: None,
         last_run: None,
         remedy: None,
     }
+}
+
+/// A state the unit is in because its last run ended. Once the manager
+/// unloads such a unit it reports no timestamps, and the recorded end of
+/// the run is when it entered that state.
+fn ended(state: StateSlug) -> bool {
+    matches!(
+        state,
+        StateSlug::Stopped | StateSlug::Failed | StateSlug::PreviousBoot
+    )
 }
 
 /// When the unit entered the state it is in.
@@ -418,7 +433,7 @@ fn since(facts: &UnitFacts) -> Option<u64> {
 }
 
 /// The recorded recipe: identity, transport, cwd, argv, environment names,
-/// labels and the profile block.
+/// labels, the profile block and the `--patch` snapshots.
 fn fill_recipe(report: &mut StatusReport, instance: &Instance) {
     let record = &instance.record;
     report.id = Some(record.id.clone());
@@ -434,7 +449,32 @@ fn fill_recipe(report: &mut StatusReport, instance: &Instance) {
     report.profile = Some(ProfileReport {
         name: record.profile.name.clone(),
         dsh_home: record.profile.dsh_home.display(),
+        patches: recorded_patches(&record.args),
     });
+    report.patches = record
+        .patches
+        .iter()
+        .map(|patch| PatchReport {
+            file: patch.file.clone(),
+            sha256: patch.sha256.clone(),
+            source: patch.source.display(),
+        })
+        .collect();
+}
+
+/// The `--patch` overlays of a recorded argv, by the launcher grammar that
+/// accepted it at creation; none for an argv it no longer accepts.
+fn recorded_patches(args: &[OsText]) -> Vec<String> {
+    let tokens: Vec<OsString> = args.iter().map(|arg| arg.as_os_str().to_owned()).collect();
+    launch::selection(&tokens)
+        .map(|selection| {
+            selection
+                .patches
+                .into_iter()
+                .map(|patch| OsText::new(patch).display())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The pinned port, and the announced address with its secret redacted
@@ -521,6 +561,7 @@ fn last_run_report(run: LastRun, boot: &str, up: bool) -> LastRunReport {
         exit_code: None,
         exit_status: None,
         child: None,
+        resources: None,
         this_boot,
     };
     if let Some(end) = end {
@@ -529,6 +570,14 @@ fn last_run_report(run: LastRun, boot: &str, up: bool) -> LastRunReport {
         report.exit_code = Some(end.exit_code);
         report.exit_status = Some(end.exit_status);
         report.child = end.child;
+        report.resources = end.resources.map(|consumed| Resources {
+            cpu_usage_nsec: consumed.cpu_usage_nsec,
+            memory_current: None,
+            memory_peak: consumed.memory_peak,
+            tasks_current: None,
+            io_read_bytes: consumed.io_read_bytes,
+            io_write_bytes: consumed.io_write_bytes,
+        });
     }
     report
 }

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::Error;
 use crate::record::{EnvVar, OsText, ReleaseFile};
@@ -78,8 +78,55 @@ fn selects_the_profile_by_the_launcher_grammar() -> Result<(), Error> {
     Ok(())
 }
 
+// catches: a run's --patch overlays lost, reordered, taken from the app's arguments, or missed in their inline form
+#[test]
+fn selection_keeps_the_patch_overlays_in_order() -> Result<(), Error> {
+    let chosen = |tokens: &[&str]| -> Result<(String, Vec<OsString>), Error> {
+        let selection = super::selection(&argv(tokens))?;
+        Ok((selection.profile, selection.patches))
+    };
+    assert_eq!(chosen(&["web"])?, ("web".to_owned(), Vec::new()));
+    assert_eq!(
+        chosen(&["headless", "--patch", "pair.yml", "summarise"])?,
+        ("headless".to_owned(), argv(&["pair.yml"]))
+    );
+    assert_eq!(
+        chosen(&[
+            "--patch=/a.yml",
+            "--profile",
+            "worker",
+            "--patch",
+            "./b.yml",
+            "-p",
+            "task",
+            "--patch",
+            "c.yml",
+        ])?,
+        ("worker".to_owned(), argv(&["/a.yml", "./b.yml"])),
+        "the overlays end with the launcher flags; a later --patch is the app's"
+    );
+    assert_eq!(
+        chosen(&["web", "--", "--patch", "x.yml"])?.1,
+        Vec::<OsString>::new(),
+        "nothing after `--` is the launcher's"
+    );
+    let raw = OsString::from_vec(vec![b'p', 0xff]);
+    assert_eq!(
+        super::selection(&[
+            OsString::from("acp"),
+            OsString::from("--patch"),
+            raw.clone()
+        ])?
+        .patches,
+        vec![raw],
+        "a path that is not UTF-8 is kept as it is"
+    );
+    Ok(())
+}
+
 // catches: an argv accepted that would manage plugins, recreate the profile at every start, print and exit, select two
-// profiles, or name a profile outside the DSH home's profiles directory (P1.2)
+// profiles, name a profile outside the DSH home's profiles directory (P1.2), or hand dsh an empty `--patch` that every
+// start then fails on
 #[test]
 fn selection_refusals() -> Result<(), Error> {
     let refused: &[&[&str]] = &[
@@ -97,6 +144,9 @@ fn selection_refusals() -> Result<(), Error> {
         &["web", "--version"],
         &["--profile"],
         &["web", "--patch"],
+        &["web", "--patch="],
+        &["web", "--patch", ""],
+        &["--patch=", "--profile", "web"],
         &["--profile="],
         &["."],
         &[".."],
@@ -401,5 +451,58 @@ fn per_service_metadata_is_never_captured_or_composed() {
     assert_eq!(
         super::capture_environment(&pairs(&[("MONITOR_CUSTOM", "kept")]), &[]),
         vec![var("MONITOR_CUSTOM", "kept")]
+    );
+}
+
+// catches: a snapshot overlay given to dsh anywhere but right after the profile, out of the recorded order, after
+// an overlay the user typed (which must win), or a typed overlay moved; also with the web flags injected after
+#[test]
+fn launch_inserts_patches_after_profile_word() {
+    let snapshots = [PathBuf::from("/s/00-a.yml"), PathBuf::from("/s/01-b.yml")];
+    let ours = ["--patch", "/s/00-a.yml", "--patch", "/s/01-b.yml"];
+    let with = |head: &[&str], tail: &[&str]| -> Vec<OsString> {
+        head.iter()
+            .chain(&ours)
+            .chain(tail)
+            .map(OsString::from)
+            .collect()
+    };
+    let rows: [(&[&str], Vec<OsString>); 6] = [
+        (&["headless", "-p", "t"], with(&["headless"], &["-p", "t"])),
+        (
+            &["headless", "--patch", "u.yml", "t"],
+            with(&["headless"], &["--patch", "u.yml", "t"]),
+        ),
+        (
+            &["--profile", "web", "--patch", "z"],
+            with(&["--profile", "web"], &["--patch", "z"]),
+        ),
+        (
+            &["--profile=web", "--patch=z", "--", "x"],
+            with(&["--profile=web"], &["--patch=z", "--", "x"]),
+        ),
+        (
+            &["--patch", "z", "--profile", "web"],
+            with(&[], &["--patch", "z", "--profile", "web"]),
+        ),
+        (&["acp"], with(&["acp"], &[])),
+    ];
+    for (typed, want) in rows {
+        let mut args = argv(typed);
+        super::insert_patches(&mut args, &snapshots);
+        assert_eq!(args, want, "{typed:?}");
+        let mut unchanged = argv(typed);
+        super::insert_patches(&mut unchanged, &[]);
+        assert_eq!(unchanged, argv(typed));
+    }
+    let mut web = argv(&["--profile", "web", "--patch", "z"]);
+    super::insert_patches(&mut web, &snapshots);
+    super::inject_web_args(&mut web, None);
+    assert_eq!(
+        web,
+        with(
+            &["--profile", "web"],
+            &["--patch", "z", "--no-open", "--port", "0"]
+        )
     );
 }

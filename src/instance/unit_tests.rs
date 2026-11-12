@@ -42,6 +42,8 @@ fn request(scratch: &Path, name: &str) -> CreateRequest {
         release_given: true,
         cwd,
         args: vec!["web".into(), "--port".into(), "4100".into()],
+        patches: Vec::new(),
+        stdin: None,
         environment: vec![EnvVar {
             name: "TERM".into(),
             value: "xterm".into(),
@@ -198,6 +200,8 @@ fn compare_recipe_reports_fields() {
             .iter()
             .map(|arg| arg.as_os_str().to_owned())
             .collect(),
+        patches: Vec::new(),
+        stdin: None,
         environment: stored.environment.clone(),
         profile: stored.profile.clone(),
         transport: stored.transport,
@@ -409,3 +413,199 @@ fn web_port_last_run_and_id() {
 
 #[path = "state_tests.rs"]
 mod state;
+
+/// The snapshot of `text`, the `index`th overlay, read from `source`.
+fn patch_source(index: usize, text: &str, source: &str) -> PatchSource {
+    PatchSource {
+        patch: RunPatch::of(index, text.as_bytes(), OsText::from(source)),
+        bytes: text.as_bytes().to_vec(),
+    }
+}
+
+// catches: a record made without --patch written differently than before the snapshots existed (a `patches` key,
+// even empty, that an older dshd would refuse), or a creation without --patch leaving a patches directory
+#[test]
+fn record_without_patches_serializes_unchanged() {
+    let stored: InstanceRecord = serde_json::from_str(FIXTURE).unwrap();
+    assert!(stored.patches.is_empty());
+    let written = String::from_utf8(crate::record::to_json(&stored).unwrap()).unwrap();
+    assert_eq!(
+        written, FIXTURE,
+        "the fixture, as dshd wrote it before the field existed, is written byte for byte"
+    );
+
+    let scratch = Scratch::new("instance-no-patch");
+    let root = StateRoot::new(scratch.path().join("state"));
+    let (nix_store, _) = fake_nix_store(scratch.path());
+    let made = create(&root, &nix_store, request(scratch.path(), "plain")).unwrap();
+    assert!(!made.dir.patches().exists());
+    let text = fs::read_to_string(made.dir.instance_json()).unwrap();
+    assert!(!text.contains("patches"), "{text}");
+}
+
+// catches: a snapshot entry lost or reordered through the record, written with a loose mode or a name that
+// is not the digest's, a source re-read, or an unknown key inside an entry acted on by an older reader
+#[test]
+fn record_patches_roundtrip() {
+    let scratch = Scratch::new("instance-patches");
+    let root = StateRoot::new(scratch.path().join("state"));
+    let (nix_store, _) = fake_nix_store(scratch.path());
+    let mut request = request(scratch.path(), "overlaid");
+    request.patches = vec![
+        patch_source(0, "b: 2\n", "/etc/b.yml"),
+        patch_source(1, "a: 1\n", "a.yml"),
+    ];
+    let made = create(&root, &nix_store, request.clone()).unwrap();
+    let recorded: Vec<RunPatch> = request.patches.iter().map(|s| s.patch.clone()).collect();
+    assert_eq!(made.record.patches, recorded, "recorded in the order given");
+    let bits = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(bits(&made.dir.patches()), 0o700);
+    for source in &request.patches {
+        let snapshot = made.dir.patch(&source.patch.file);
+        assert_eq!(fs::read(&snapshot).unwrap(), source.bytes);
+        assert_eq!(bits(&snapshot), 0o600);
+    }
+    let loaded = load_strict(&root, &made.name).unwrap();
+    assert_eq!(loaded.record, made.record);
+    let sources: Vec<String> = loaded
+        .record
+        .patches
+        .iter()
+        .map(|p| p.source.display())
+        .collect();
+    assert_eq!(
+        sources,
+        ["/etc/b.yml", "a.yml"],
+        "as given, relative or not"
+    );
+    let text = fs::read_to_string(made.dir.instance_json()).unwrap();
+    let parsed: InstanceRecord = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed.patches, made.record.patches);
+
+    let newer = text.replacen("\"sha256\"", "\"signed\": true, \"sha256\"", 1);
+    fs::write(made.dir.instance_json(), newer).unwrap();
+    assert!(matches!(
+        load_strict(&root, &made.name),
+        Err(Error::InconsistentState { reason, .. }) if reason.contains("patches[0].signed")
+    ));
+}
+
+// catches: an overlay whose content changed accepted as the same recipe, a reordering or an added overlay not
+// seen, or a different source path with the same content refused
+#[test]
+fn patch_digest_changes_recipe_identity() {
+    let stored: InstanceRecord = {
+        let mut record: InstanceRecord = serde_json::from_str(FIXTURE).unwrap();
+        record.patches = vec![
+            patch_source(0, "a: 1\n", "a.yml").patch,
+            patch_source(1, "b: 2\n", "b.yml").patch,
+        ];
+        record
+    };
+    let mut request = CreateRequest {
+        name: InstanceName::parse(&stored.name).unwrap(),
+        release: release_at(PathBuf::from("/nix/store/r")),
+        release_given: false,
+        cwd: PathBuf::from(stored.cwd.as_os_str()),
+        args: stored
+            .args
+            .iter()
+            .map(|arg| arg.as_os_str().to_owned())
+            .collect(),
+        patches: vec![
+            patch_source(0, "a: 1\n", "/elsewhere/a.yml"),
+            patch_source(1, "b: 2\n", "b.yml"),
+        ],
+        stdin: None,
+        environment: stored.environment.clone(),
+        profile: stored.profile.clone(),
+        transport: stored.transport,
+        labels: stored.labels.clone(),
+    };
+    assert_eq!(
+        compare_recipe(&stored, &request),
+        None,
+        "the same content from another path is the same recipe"
+    );
+    for changed in [
+        vec![
+            patch_source(0, "a: 1\n", "a.yml"),
+            patch_source(1, "b: 3\n", "b.yml"),
+        ],
+        vec![
+            patch_source(0, "b: 2\n", "b.yml"),
+            patch_source(1, "a: 1\n", "a.yml"),
+        ],
+        vec![patch_source(0, "a: 1\n", "a.yml")],
+        Vec::new(),
+    ] {
+        request.patches = changed;
+        let difference = compare_recipe(&stored, &request).unwrap();
+        let fields: Vec<&str> = difference
+            .fields
+            .iter()
+            .map(|(field, _, _)| *field)
+            .collect();
+        assert_eq!(fields, ["patches"], "{:?}", request.patches);
+        let shown = &difference.fields.first().unwrap().1;
+        let short: String = stored
+            .patches
+            .first()
+            .unwrap()
+            .sha256
+            .chars()
+            .take(16)
+            .collect();
+        assert!(shown.contains(&short), "{shown}");
+    }
+}
+
+// catches: a stdin snapshot not written with the record, written with a loose mode, a creation without
+// --stdin leaving a stdin file or key, or another stdin content (or none) accepted as the same recipe
+#[test]
+fn stdin_snapshot_is_written_and_part_of_the_recipe() {
+    let scratch = Scratch::new("instance-stdin");
+    let root = StateRoot::new(scratch.path().join("state"));
+    let (nix_store, _) = fake_nix_store(scratch.path());
+    let plain = create(&root, &nix_store, request(scratch.path(), "plain")).unwrap();
+    assert!(!plain.dir.stdin().exists());
+    assert_eq!(plain.record.stdin, None);
+
+    let source = |text: &str, from: &str| StdinSource {
+        stdin: RunStdin::of(text.as_bytes(), OsText::from(from)),
+        bytes: text.as_bytes().to_vec(),
+    };
+    let mut request = request(scratch.path(), "fed");
+    request.stdin = Some(source("the task\n", "task.txt"));
+    let made = create(&root, &nix_store, request.clone()).unwrap();
+    assert_eq!(fs::read(made.dir.stdin()).unwrap(), b"the task\n");
+    let bits = fs::metadata(made.dir.stdin()).unwrap().permissions().mode() & 0o777;
+    assert_eq!(bits, 0o600);
+    let loaded = load_strict(&root, &made.name).unwrap();
+    assert_eq!(
+        loaded.record.stdin,
+        request.stdin.as_ref().map(|s| s.stdin.clone())
+    );
+
+    request.stdin = Some(source("the task\n", "-"));
+    assert_eq!(
+        compare_recipe(&made.record, &request),
+        None,
+        "the same content from elsewhere is the same recipe"
+    );
+    for changed in [Some(source("another task\n", "task.txt")), None] {
+        request.stdin = changed;
+        let difference = compare_recipe(&made.record, &request).unwrap();
+        let fields: Vec<&str> = difference.fields.iter().map(|(f, _, _)| *f).collect();
+        assert_eq!(fields, ["stdin"], "{:?}", request.stdin);
+    }
+    let difference = compare_recipe(&plain.record, &{
+        let mut fed = request.clone();
+        fed.name = plain.name.clone();
+        fed.stdin = Some(source("x", "x"));
+        fed
+    })
+    .unwrap();
+    let (_, stored, _) = difference.fields.first().unwrap();
+    assert_eq!(stored, "none");
+}

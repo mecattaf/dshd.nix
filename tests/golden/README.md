@@ -130,7 +130,11 @@ itself with status N); a unit without a file has never run.
   fake writes the instance's `last-run.json` as the runner's post-stop step
   would: invocation `0123456789abcdef0123456789abcdef`, the end
   `exited`/`N` with the child's exit code N, `serviceResult` `success` for
-  0 and `exit-code` otherwise, no stop intent.
+  0 and `exit-code` otherwise, no stop intent, and the run's totals
+  `cpuUsageNSec` 2500000000 and `memoryPeak` 73400320 with no IO counts.
+  With `FAKE_COLLECT=1` and `FAKE_EXIT=0` the unit's state file is then
+  removed, as the manager unloads an ended unit nothing references, so
+  later queries show it as never run.
 - `stop UNIT`: the state becomes `dead`. With `FAKE_FAIL=stop` the state
   stays, and the fake prints `Failed to stop UNIT: Access denied` on stderr
   and exits 1.
@@ -142,11 +146,15 @@ itself with status N); a unit without a file has never run.
 
 `journalctl` prints a journal: with `_SYSTEMD_INVOCATION_ID=ID`,
 `$FAKE_DIR/invocations/ID`, else `$FAKE_DIR/journal`; a missing file is
-empty. `-n +K` prints the oldest K lines and `-n K` the newest K. `-f`
-with `--no-tail` prints the whole journal and with `-n 0` none of it,
-stopping after the runner's last line (`dshd-run: run ended`) or at the
-end of the file, since it has no later lines to wait for. `nix-store
---option substitute false --realise PATH --add-root LINK` points `LINK` at
+empty. With `-o json` it prints one entry per line: the journal's `.json`
+sibling when there is one, as `read-long-line` uses for a line journald
+broke at `LineMax`, else `{"MESSAGE":"LINE"}` for each line, and `-n`
+counts entries. `-n +K` prints the oldest K lines and `-n K` the newest
+K. `-f` with `--no-tail` prints the whole journal and with `-n 0` none of
+it, then, when the case's `env` sets `FAKE_FOLLOW_END=1`, the runner's
+last line (`dshd-run: run ended: success`), and waits at that end, as a
+live follower does, until dshd kills it. `nix-store --option substitute
+false --realise PATH --add-root LINK` points `LINK` at
 `PATH` and prints `LINK`. `xdg-open` only logs.
 
 ## A case
@@ -162,6 +170,7 @@ end of the file, since it has no later lines to wait for. `nix-store
 | `absent` | paths under `%ROOT%` removed before the run |
 | `calls/<tool>` | the expected log of that fake; an empty file means the tool was not called |
 | `gone` | paths under `%ROOT%` that must not exist after the run |
+| `kept` | paths under `%ROOT%` that must exist before the run and be the same tree after it, as the DSH home is |
 
 Whether linger is on depends on the host, not on dshd, so it is taken out
 before the comparison: stderr lines starting `dshd: warning: linger is off`
@@ -181,11 +190,34 @@ removed again. `rm-enabled` checks removal of autostart membership,
 `rm-inconsistent` that the remedy `get` prints for a record a newer dshd
 wrote removes it, and `tui-refused` checks an unsupported terminal
 profile.
+`stop-invocation-other` is the compare-and-stop fence: `web-1` runs
+another invocation than the one its recorded last run names, and a stop
+that names the recorded one stops nothing and writes no stop intent; the
+other `stop-invocation-*` cases pin the stopped, already-stopped and
+refused outcomes. The `rm-invocation*` cases are the same fence on `rm`:
+a stopped instance removed after the run named, and the refusals of
+another last run, none, a newer running invocation and the run still
+going, each removing nothing.
 `attached-elsewhere` is exercised by the real relay in
 `tests/relay/handover.rs`; release updates run in `checks/switch.nix`.
 The complete error kind/exit table is in `src/error/unit_tests.rs`.
 An `_SCRUBBED` environment value must reach neither output nor any file
 under the case root, including the instance record.
+`run-patch`, `run-patch-different-recipe`, `get-patches` and
+`ls-patches` pin a run's `--patch` overlays in the recipe and in the
+reports, and `run-several-apps` the warning for a profile that lists two
+apps. `run-patch-snapshot`, `run-patch-snapshot-different`,
+`run-patch-unreadable` and `get-snapshot` pin dshd's own `run --patch`:
+a creation with two snapshots, a changed overlay refused as another
+recipe, an overlay that cannot be read, and the `patches` of `get`.
+`run-refused-keeps-labels` and `run-masked-keeps-labels` keep the
+instance record: a `run` refused because the headless task already ran,
+or because the unit is masked, sets none of its `--label`s.
+`wait-follows-from-now` pins that `wait` follows only the lines written
+from now (`-n 0`), never the whole run again, and `wait-end-before-follow`
+that such a follower still finds an end recorded before it started
+reading, by looking while its journal is silent, instead of waiting out
+its `--timeout`.
 
 `calls/systemctl-queries` optionally pins read-only calls, including their
 batching. Other tool traces are always compared; an absent expectation

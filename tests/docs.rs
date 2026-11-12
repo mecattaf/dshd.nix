@@ -42,6 +42,93 @@ fn doc_examples_parse() -> TestResult {
     Ok(())
 }
 
+// catches: a flag in a verb's usage line (src/cli/help.rs) that the README's verb table, which the
+// README calls the reference for each verb, does not list, as `run --patch` once was
+#[test]
+fn verb_table_lists_every_flag() -> TestResult {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let help = fs::read_to_string(root.join("src/cli/help.rs"))?;
+    let readme = fs::read_to_string(root.join("README.md"))?;
+    let rows: Vec<(&str, &str)> = readme
+        .lines()
+        .skip_while(|line| !line.starts_with("| Verb | Flags |"))
+        .skip(2)
+        .take_while(|line| line.starts_with("| `"))
+        .filter_map(|line| {
+            let (verb, rest) = line.strip_prefix("| `")?.split_once('`')?;
+            Some((verb.split(' ').next()?, rest.split(" | ").nth(1)?))
+        })
+        .collect();
+    let mut failures = Vec::new();
+    for usage in help
+        .lines()
+        .filter_map(|line| line.split_once("Usage: dshd "))
+    {
+        // The general page's `VERB`, and code that builds a usage line, name no verb.
+        let verb = usage.1.split(' ').next().unwrap_or_default();
+        if verb.is_empty() || !verb.chars().all(|c| c.is_ascii_lowercase()) {
+            continue;
+        }
+        let Some((_, listed)) = rows.iter().find(|(row, _)| *row == verb) else {
+            failures.push(format!("{verb}: no row"));
+            continue;
+        };
+        for flag in flags(usage.1).filter(|flag| !["--json", "--text"].contains(flag)) {
+            if !flags(listed).any(|row_flag| row_flag == flag) {
+                failures.push(format!("{verb}: {flag}"));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "flags missing from the README verb table:\n{}",
+        failures.join("\n")
+    );
+    Ok(())
+}
+
+/// The flags named in a usage line or a table cell: `-x` and `--word`.
+fn flags(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| c.is_whitespace() || "[]|()`,\\".contains(c))
+        .filter(|word| {
+            let name = word.trim_start_matches('-');
+            word.starts_with('-') && name.starts_with(|c: char| c.is_ascii_alphabetic())
+        })
+}
+
+/// The layers DSH composes a profile from at every start, in DSH's order:
+/// the bundles in the profile's `package.json`, the profile's own patch, the
+/// home layer, which applies to every profile of the DSH home, and the
+/// `--patch` overlays of the run.
+const COMPOSITION: [&str; 4] = [
+    "package.json",
+    "cordis.patch.yml",
+    "$DSH_HOME/cordis.patch.yml",
+    "--patch",
+];
+
+// catches: a README whose composition order leaves out a layer DSH applies, or names it out of
+// DSH's order, so a reader checking an instance against its profile folder misses what overrides it
+#[test]
+fn readme_states_the_composition_order() -> TestResult {
+    let text = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))?;
+    let prose = text.replace('`', "");
+    let prose = prose.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (_, after) = prose
+        .split_once("DSH composes the profile at every start")
+        .ok_or("README.md: no sentence states the order DSH composes a profile in")?;
+    let sentence = after.split(". ").next().unwrap_or_default();
+    let mut rest = sentence;
+    for layer in COMPOSITION {
+        (_, rest) = rest.split_once(layer).ok_or_else(|| {
+            format!(
+                "README.md: the composition order does not name {layer} after the layers before it:{sentence}"
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// The `dshd` command lines of a Markdown text: `$ dshd ...` lines, and
 /// inline code spans that start with `dshd`, which are prose (`true`).
 fn examples(text: &str) -> Vec<(String, bool)> {

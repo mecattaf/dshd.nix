@@ -30,6 +30,10 @@ const BOOTED_LINK: &str = "booted";
 const WEB_PORT_FILE: &str = "web-port";
 /// Advisory lock taken by the CLI around create/update/remove.
 pub const LOCK_FILE: &str = "lock";
+/// The directory of an instance's `run --patch` snapshots.
+const PATCHES_DIR: &str = "patches";
+/// The file of an instance's `run --stdin` snapshot.
+const STDIN_FILE: &str = "stdin";
 
 /// File names inside an instance's runtime directory `%t/dshd/<name>`.
 const WEB_URL_FILE: &str = "web-url";
@@ -186,6 +190,21 @@ impl InstanceDir {
     /// The advisory lock file.
     pub fn lock(&self) -> PathBuf {
         self.0.join(LOCK_FILE)
+    }
+
+    /// The directory of the `run --patch` snapshots.
+    pub fn patches(&self) -> PathBuf {
+        self.0.join(PATCHES_DIR)
+    }
+
+    /// The snapshot recorded as `file`.
+    pub fn patch(&self, file: &str) -> PathBuf {
+        self.patches().join(file)
+    }
+
+    /// The `run --stdin` snapshot.
+    pub fn stdin(&self) -> PathBuf {
+        self.0.join(STDIN_FILE)
     }
 }
 

@@ -1,6 +1,7 @@
 //! `stop`, `restart`, `enable`, `disable`: one systemctl call each (enable
 //! also writes its wants link), the command echoed, the status observed
-//! afterwards reported. `run` and
+//! afterwards reported. `stop --invocation` compares the unit's invocation
+//! first, under the instance lock. `run` and
 //! `start` share the start of an existing instance, the launch, the
 //! template and mask checks, the stop intent and the linger warning.
 
@@ -9,11 +10,11 @@ use std::time::{Duration, Instant};
 
 use super::status::{self, Shown};
 use crate::cli::report::{OutcomeSlug, StatusReport};
-use crate::cli::{Context, NameArgs};
-use crate::error::{Error, LINGER_REMEDY, StartFailure};
-use crate::fsx;
+use crate::cli::{Context, NameArgs, StopArgs};
+use crate::error::{Error, LINGER_REMEDY, OtherInvocation, StartFailure};
+use crate::fsx::{self, Lock};
 use crate::instance::{self, Instance};
-use crate::name::{InstanceName, RuntimeDir, TEMPLATE_FILE};
+use crate::name::{InstanceDir, InstanceName, RuntimeDir, TEMPLATE_FILE};
 use crate::out::{self, Style};
 use crate::record::Transport;
 use crate::systemctl::{ActiveState, LoadState, UnitFacts, UnitResult};
@@ -38,11 +39,23 @@ pub(super) enum Launch {
     Restart,
 }
 
-/// `stop NAME`: stopped or already-stopped.
-pub(super) fn stop(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
+/// `stop [--invocation ID] NAME`: stopped or already-stopped. With
+/// `--invocation`, the instance lock is held from the comparison to the
+/// end of the stop, so none of dshd's own starts comes between them, and
+/// a unit on any other invocation than ID is left as it is.
+pub(super) fn stop(ctx: &Context, args: &StopArgs) -> Result<(), Error> {
     let name = &args.name;
     let unit = name.unit();
+    let _fence = match &args.invocation {
+        Some(_) => lock_if_present(ctx, name)?,
+        None => None,
+    };
     let facts = ctx.systemctl.show(&unit)?;
+    if let Some(expected) = &args.invocation {
+        status::require(ctx, name, &facts)?;
+        let dir = ctx.state_root.instance(name);
+        require_invocation(name, &facts, || recorded_invocation(&dir), expected)?;
+    }
     if matches!(
         facts.active_state,
         ActiveState::Inactive | ActiveState::Failed
@@ -86,6 +99,64 @@ pub(super) fn stop(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
         shown.notes.push(notice(&disable));
     }
     status::print_outcome(ctx, shown)
+}
+
+/// The instance lock, when the instance has a directory to hold it. A
+/// unit the manager holds without one has no lock, and nothing of dshd's
+/// can start it. A directory removed while waiting for the lock (`rm`
+/// held it) is `NotFound`, as [`instance::lock_loaded`] reports it.
+fn lock_if_present(ctx: &Context, name: &InstanceName) -> Result<Option<Lock>, Error> {
+    let dir = ctx.state_root.instance(name);
+    match fsx::kind(dir.path())? {
+        Some(_) => match instance::lock(&dir) {
+            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+                Err(Error::NotFound(name.to_string()))
+            }
+            taken => taken.map(Some),
+        },
+        None => Ok(None),
+    }
+}
+
+/// The invocation id of the run the runner last recorded, if any.
+pub(super) fn recorded_invocation(dir: &InstanceDir) -> Result<Option<String>, Error> {
+    Ok(instance::read_last_run(dir)?
+        .map(|run| run.invocation_id)
+        .filter(|id| !id.is_empty()))
+}
+
+/// `OtherInvocation` unless `expected` names the run `stop --invocation`
+/// may stop or `rm --invocation` may remove: the unit's current
+/// invocation while it is up; while it is not, its last one, which is
+/// systemd's own while the manager still names it and else the one the
+/// runner recorded (`recorded`, read only then). Ids compare without
+/// regard to case.
+pub(super) fn require_invocation(
+    name: &InstanceName,
+    facts: &UnitFacts,
+    recorded: impl FnOnce() -> Result<Option<String>, Error>,
+    expected: &str,
+) -> Result<(), Error> {
+    let up = status::unit_up(facts);
+    let found = if !facts.invocation_id.is_empty() {
+        Some(facts.invocation_id.clone())
+    } else if up {
+        None
+    } else {
+        recorded()?
+    };
+    if found
+        .as_deref()
+        .is_some_and(|id| id.eq_ignore_ascii_case(expected))
+    {
+        return Ok(());
+    }
+    Err(Error::OtherInvocation(Box::new(OtherInvocation {
+        name: name.to_string(),
+        expected: expected.to_owned(),
+        found,
+        up,
+    })))
 }
 
 /// `restart NAME`: reset-failed, restart, wait for active. A headless
@@ -422,5 +493,65 @@ mod tests {
             "a headless task that exited 78 ran"
         );
         assert!(!did_not_come_up(&facts("failed-start-limit.txt"), true));
+    }
+
+    // catches: a compare-and-stop that stops a newer run of the same name, refuses the run it names,
+    // or trusts the recorded run over the invocation systemd still names
+    #[test]
+    fn stop_invocation_names_the_held_or_last_run() {
+        let name = InstanceName::parse("a").unwrap();
+        let (current, older) = (
+            "0123456789abcdef0123456789abcdef",
+            "fedcba9876543210fedcba9876543210",
+        );
+        let unread = || -> Result<Option<String>, Error> {
+            panic!("the record is read only when systemd names no run")
+        };
+        let recorded = |id: &'static str| move || Ok(Some(id.to_owned()));
+        let refused = |result: Result<(), Error>| match result {
+            Err(Error::OtherInvocation(other)) => *other,
+            other => panic!("not refused: {other:?}"),
+        };
+        let running = facts("running.txt");
+        assert!(require_invocation(&name, &running, unread, current).is_ok());
+        let upper = current.to_ascii_uppercase();
+        assert!(require_invocation(&name, &running, unread, &upper).is_ok());
+        assert_eq!(
+            refused(require_invocation(&name, &running, unread, older)),
+            OtherInvocation {
+                name: "a".into(),
+                expected: older.into(),
+                found: Some(current.into()),
+                up: true,
+            }
+        );
+        let stopped = facts("inactive.txt");
+        assert!(require_invocation(&name, &stopped, recorded(older), older).is_ok());
+        let other = refused(require_invocation(
+            &name,
+            &stopped,
+            recorded(older),
+            current,
+        ));
+        assert_eq!((other.found.as_deref(), other.up), (Some(older), false));
+        let never_ran = refused(require_invocation(&name, &stopped, || Ok(None), current));
+        assert_eq!((never_ran.found, never_ran.up), (None, false));
+        let remembered = UnitFacts {
+            invocation_id: current.into(),
+            ..facts("inactive.txt")
+        };
+        assert!(require_invocation(&name, &remembered, unread, current).is_ok());
+        assert!(require_invocation(&name, &remembered, unread, older).is_err());
+        let between = refused(require_invocation(
+            &name,
+            &facts("auto-restart.txt"),
+            unread,
+            current,
+        ));
+        assert_eq!(
+            (between.found, between.up),
+            (None, true),
+            "a unit between runs that names no invocation holds none"
+        );
     }
 }

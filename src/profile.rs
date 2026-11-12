@@ -32,7 +32,30 @@ const WEB_BUNDLE: &str = "dsh-web-app";
 const ACP_BUNDLE: &str = "dsh-acp-app";
 /// The SDK host bundles: refused, an SDK host serves the client that
 /// starts it on stdio, which a unit cannot be.
-const SDK_BUNDLES: [&str; 2] = ["dsh-sdk-app", "dsh-sdk-minimal"];
+const SDK_BUNDLES: [&str; 2] = [SDK_APP_BUNDLE, SDK_MINIMAL_BUNDLE];
+/// The SDK app bundle.
+const SDK_APP_BUNDLE: &str = "dsh-sdk-app";
+/// The minimal SDK bundle.
+const SDK_MINIMAL_BUNDLE: &str = "dsh-sdk-minimal";
+/// Every app bundle dshd knows, in the order that decides the transport.
+const APP_BUNDLES: [&str; 5] = [
+    HEADLESS_BUNDLE,
+    WEB_BUNDLE,
+    ACP_BUNDLE,
+    SDK_APP_BUNDLE,
+    SDK_MINIMAL_BUNDLE,
+];
+
+/// What a profile's live manifest selects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Detected {
+    /// The transport its bundles select.
+    pub transport: Transport,
+    /// Every app bundle it lists, in the order that decides the transport.
+    /// DSH composes every bundle a profile lists, so more than one means
+    /// several apps mounted in one process.
+    pub apps: Vec<&'static str>,
+}
 
 /// The part of `package.json` that names the profile's bundles. Every other
 /// key is DSH's and ignored.
@@ -65,7 +88,7 @@ pub fn transport(
     mut command: Command,
     dsh_home: &Path,
     profile: &str,
-) -> Result<Transport, Error> {
+) -> Result<Detected, Error> {
     let manifest = dsh_home.join(PROFILES_DIR).join(profile).join(MANIFEST);
     if fsx::kind(&manifest)?.is_none() {
         let args = [
@@ -87,7 +110,7 @@ pub fn transport(
 /// → `None`, `dsh-web-app` → `Web`, `dsh-acp-app` → `Acp`. An SDK bundle,
 /// or a profile with none of these (no manifest, no bundles, a terminal
 /// app), is `UnsupportedProfile`.
-fn detect_transport(manifest: &Path, profile: &str) -> Result<Transport, Error> {
+fn detect_transport(manifest: &Path, profile: &str) -> Result<Detected, Error> {
     let bundles = fsx::read_json::<Manifest>(manifest)?
         .unwrap_or_default()
         .dsh
@@ -104,17 +127,19 @@ fn detect_transport(manifest: &Path, profile: &str) -> Result<Transport, Error> 
             app,
         })
     };
-    if has(HEADLESS_BUNDLE) {
-        Ok(Transport::None)
+    let transport = if has(HEADLESS_BUNDLE) {
+        Transport::None
     } else if has(WEB_BUNDLE) {
-        Ok(Transport::Web)
+        Transport::Web
     } else if has(ACP_BUNDLE) {
-        Ok(Transport::Acp)
+        Transport::Acp
     } else if SDK_BUNDLES.iter().any(|sdk| has(sdk)) {
-        refuse(UnheldApp::Sdk)
+        return refuse(UnheldApp::Sdk);
     } else {
-        refuse(UnheldApp::Other)
-    }
+        return refuse(UnheldApp::Other);
+    };
+    let apps = APP_BUNDLES.into_iter().filter(|app| has(app)).collect();
+    Ok(Detected { transport, apps })
 }
 
 #[cfg(test)]

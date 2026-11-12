@@ -1,0 +1,1 @@
+{"error":{"kind":"invalid-argument","message":"--patch ./absent.yml: no such file","hint":"dshd help run"}}

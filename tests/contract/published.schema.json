@@ -119,6 +119,12 @@
             }
           ]
         },
+        "patches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/patch"
+          }
+        },
         "web": {
           "anyOf": [
             {
@@ -184,7 +190,8 @@
         "acp",
         "lastRun",
         "remedy",
-        "resources"
+        "resources",
+        "patches"
       ],
       "additionalProperties": false
     },
@@ -234,6 +241,18 @@
             }
           ]
         },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profilePatches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "release": {
           "type": [
             "string",
@@ -265,17 +284,26 @@
             "string",
             "null"
           ]
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "required": [
         "name",
         "state",
         "transport",
+        "profile",
+        "profilePatches",
         "release",
         "releaseState",
         "enabled",
         "since",
-        "remedy"
+        "remedy",
+        "labels"
       ],
       "additionalProperties": false
     },
@@ -415,6 +443,12 @@
             }
           ]
         },
+        "patches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/patch"
+          }
+        },
         "web": {
           "anyOf": [
             {
@@ -482,7 +516,8 @@
         "acp",
         "lastRun",
         "remedy",
-        "resources"
+        "resources",
+        "patches"
       ],
       "additionalProperties": false
     },
@@ -730,11 +765,39 @@
         },
         "dshHome": {
           "type": "string"
+        },
+        "patches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
         "name",
-        "dshHome"
+        "dshHome",
+        "patches"
+      ],
+      "additionalProperties": false
+    },
+    "patch": {
+      "type": "object",
+      "description": "one run --patch snapshot in a status object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "sha256",
+        "source"
       ],
       "additionalProperties": false
     },
@@ -882,6 +945,16 @@
             }
           ]
         },
+        "resources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/resources"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "thisBoot": {
           "type": "boolean"
         }
@@ -895,6 +968,7 @@
         "exitCode",
         "exitStatus",
         "child",
+        "resources",
         "thisBoot"
       ],
       "additionalProperties": false
@@ -933,6 +1007,15 @@
           "items": {
             "$ref": "#/$defs/osText"
           }
+        },
+        "patches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/runPatch"
+          }
+        },
+        "stdin": {
+          "$ref": "#/$defs/runStdin"
         },
         "environment": {
           "type": "array",
@@ -1044,6 +1127,9 @@
             "integer",
             "null"
           ]
+        },
+        "resources": {
+          "$ref": "#/$defs/runResources"
         }
       },
       "required": [
@@ -1053,6 +1139,41 @@
         "exitStatus",
         "stopIntent"
       ],
+      "additionalProperties": false
+    },
+    "runResources": {
+      "type": "object",
+      "properties": {
+        "cpuUsageNSec": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "memoryPeak": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ioReadBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ioWriteBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [],
       "additionalProperties": false
     },
     "osText": {
@@ -1109,6 +1230,44 @@
       "required": [
         "name",
         "dshHome"
+      ],
+      "additionalProperties": false
+    },
+    "runPatch": {
+      "type": "object",
+      "description": "one run --patch snapshot in instance.json",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/osText"
+        }
+      },
+      "required": [
+        "file",
+        "sha256",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "runStdin": {
+      "type": "object",
+      "description": "the run --stdin snapshot in instance.json",
+      "properties": {
+        "sha256": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/osText"
+        }
+      },
+      "required": [
+        "sha256",
+        "source"
       ],
       "additionalProperties": false
     },

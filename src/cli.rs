@@ -25,6 +25,7 @@ mod attach;
 mod context;
 mod follow;
 mod help;
+mod journal;
 mod label;
 mod lifecycle;
 mod ls;
@@ -50,8 +51,8 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 180;
 const SKILL: &str = include_str!("cli/skill.md");
 
 /// `dshd run [--bg] [--name N] [--release R] [--cwd D] [--label K=V]...
-/// [--timeout S] -- DSH ARGUMENTS`: create the instance, or match the
-/// stored recipe of `--name`, and start it.
+/// [--patch PATH]... [--stdin FILE] [--timeout S] -- DSH ARGUMENTS`: create the instance,
+/// or match the stored recipe of `--name`, and start it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunArgs {
     /// `--name N`; default `PROFILE-K` with the lowest free K.
@@ -62,6 +63,11 @@ pub struct RunArgs {
     pub cwd: Option<PathBuf>,
     /// `--label KEY=VALUE`, repeatable. An empty value removes the key.
     pub labels: BTreeMap<String, String>,
+    /// `--patch PATH`, repeatable: overlays dshd snapshots into the instance at creation.
+    pub patches: Vec<PathBuf>,
+    /// `--stdin FILE`: the content dshd snapshots at creation and hands a
+    /// headless dsh as its stdin at every start; `-` reads dshd's own stdin.
+    pub stdin: Option<PathBuf>,
     /// `--bg`: return once the instance runs, also for a headless task.
     pub bg: bool,
     /// `--timeout S`: how long a foreground headless run follows its task.
@@ -77,6 +83,8 @@ impl Default for RunArgs {
             release: None,
             cwd: None,
             labels: BTreeMap::new(),
+            patches: Vec::new(),
+            stdin: None,
             bg: false,
             timeout: DEFAULT_TIMEOUT_SECS,
             argv: Vec::new(),
@@ -100,6 +108,26 @@ pub struct NameArgs {
     pub name: InstanceName,
 }
 
+/// `dshd stop [--invocation ID] NAME`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopArgs {
+    /// The instance.
+    pub name: InstanceName,
+    /// `--invocation ID`: stop only the run of this systemd invocation id,
+    /// 32 lowercase hex digits.
+    pub invocation: Option<String>,
+}
+
+/// `dshd rm [--invocation ID] NAME`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RmArgs {
+    /// The instance.
+    pub name: InstanceName,
+    /// `--invocation ID`: remove only an instance whose last run was this
+    /// systemd invocation id, 32 lowercase hex digits.
+    pub invocation: Option<String>,
+}
+
 /// `dshd update [-R] NAME`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateArgs {
@@ -116,13 +144,17 @@ pub struct LsArgs {
     pub bare: bool,
 }
 
-/// `dshd read NAME [-n LINES] [-f]`.
+/// `dshd read NAME [-n LINES | --head LINES] [-f]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadArgs {
     /// The instance.
     pub name: InstanceName,
-    /// `-n LINES`: lines to show (default [`READ_DEFAULT_LINES`]).
+    /// `-n LINES` or `--head LINES`: lines to show (default
+    /// [`READ_DEFAULT_LINES`]).
     pub lines: u32,
+    /// `--head`: the run's oldest `lines` lines, from its start, instead of
+    /// its newest.
+    pub head: bool,
     /// `-f`: keep printing new lines until the run ends.
     pub follow: bool,
 }
@@ -167,8 +199,8 @@ pub enum Verb {
     Run(RunArgs),
     /// `start [--rerun] NAME`.
     Start(StartArgs),
-    /// `stop NAME`.
-    Stop(NameArgs),
+    /// `stop [--invocation ID] NAME`.
+    Stop(StopArgs),
     /// `restart NAME`.
     Restart(NameArgs),
     /// `update [-R] NAME`.
@@ -177,7 +209,7 @@ pub enum Verb {
     Ls(LsArgs),
     /// `get NAME`.
     Get(NameArgs),
-    /// `read NAME [-n LINES] [-f]`.
+    /// `read NAME [-n LINES | --head LINES] [-f]`.
     Read(ReadArgs),
     /// `wait NAME [--timeout S]`.
     Wait(WaitArgs),
@@ -189,8 +221,8 @@ pub enum Verb {
     Enable(NameArgs),
     /// `disable NAME`.
     Disable(NameArgs),
-    /// `rm NAME`.
-    Rm(NameArgs),
+    /// `rm [--invocation ID] NAME`.
+    Rm(RmArgs),
     /// `help [VERB]`, and `--help` anywhere.
     Help(Option<String>),
     /// `--skill`.
@@ -379,6 +411,7 @@ mod tests {
         let read = Verb::Read(ReadArgs {
             name,
             lines: READ_DEFAULT_LINES,
+            head: false,
             follow: false,
         });
         let rows = [
@@ -409,6 +442,73 @@ mod tests {
                 },
                 "row {index}"
             );
+        }
+    }
+
+    // catches: dshd's --patch dropped, reordered, read from dsh's argv after --, or an empty value accepted
+    #[test]
+    fn run_patch_flag_parses_repeatable_in_order() {
+        let Verb::Run(args) = parse(os(&[
+            "run",
+            "--patch",
+            "b.yml",
+            "--name",
+            "a",
+            "--patch=/etc/a.yml",
+            "--",
+            "web",
+            "--patch",
+            "c.yml",
+        ]))
+        .unwrap() else {
+            panic!("not run");
+        };
+        assert_eq!(
+            args.patches,
+            [PathBuf::from("b.yml"), PathBuf::from("/etc/a.yml")]
+        );
+        assert_eq!(args.argv, os(&["web", "--patch", "c.yml"]));
+        let Verb::Run(none) = parse(os(&["run", "--", "web"])).unwrap() else {
+            panic!("not run");
+        };
+        assert!(none.patches.is_empty());
+        for refused in [
+            &["run", "--patch", "", "--", "web"][..],
+            &["run", "--patch=", "--", "web"],
+            &["run", "--patch"],
+            &["start", "--patch", "x", "a"],
+        ] {
+            let error = parse(os(refused)).unwrap_err();
+            assert_eq!(error.kind(), "invalid-argument", "{refused:?}: {error}");
+        }
+    }
+
+    // catches: dshd's --stdin dropped, read from dsh's argv after --, given twice, an empty value accepted,
+    // or - (dshd's own stdin) refused
+    #[test]
+    fn run_stdin_flag_parses_once() {
+        for (given, want) in [("task.txt", "task.txt"), ("-", "-")] {
+            let Verb::Run(args) =
+                parse(os(&["run", "--stdin", given, "--", "headless", "-"])).unwrap()
+            else {
+                panic!("not run");
+            };
+            assert_eq!(args.stdin, Some(PathBuf::from(want)));
+            assert_eq!(args.argv, os(&["headless", "-"]));
+        }
+        let Verb::Run(none) = parse(os(&["run", "--", "headless", "--stdin", "x"])).unwrap() else {
+            panic!("not run");
+        };
+        assert_eq!(none.stdin, None);
+        for refused in [
+            &["run", "--stdin", "", "--", "headless", "-"][..],
+            &["run", "--stdin=", "--", "headless", "-"],
+            &["run", "--stdin", "a", "--stdin", "b", "--", "headless", "-"],
+            &["run", "--stdin"],
+            &["start", "--stdin", "x", "a"],
+        ] {
+            let error = parse(os(refused)).unwrap_err();
+            assert_eq!(error.kind(), "invalid-argument", "{refused:?}: {error}");
         }
     }
 

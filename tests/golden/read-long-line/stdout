@@ -1,0 +1,1 @@
+{"name":"web-1","invocationId":"0123456789abcdef0123456789abcdef","complete":true,"streams":["stdout","stderr"],"lines":["dshd-run: run started","{\"type\":\"final\",\"text\":\"one answer that journald broke at LineMax into three entries\"}","dshd-run: run ended: success"]}

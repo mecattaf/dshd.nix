@@ -4,7 +4,7 @@
 //! with pipes, reports readiness over `sd_notify`, supervises the
 //! child on its main thread (stop signals and reaping, see `signal`) and
 //! picks one exit status. `poststop` completes `last-run.json` from what
-//! systemd hands `ExecStopPost`.
+//! systemd hands `ExecStopPost` and the totals of the unit's cgroup.
 //!
 //! The unit's working directory is the instance directory and systemd
 //! names the runtime directory in `$RUNTIME_DIRECTORY`; the runner derives
@@ -14,6 +14,7 @@
 //! `stop-intent`. Every line of a run in the journal comes after
 //! `RUN_STARTED`; the last one is `poststop`'s `RUN_ENDED`.
 
+mod cgroup;
 mod completion;
 
 pub mod exit;
@@ -21,7 +22,8 @@ pub mod notify;
 pub mod signal;
 pub mod web;
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -33,8 +35,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
+use crate::fsx::Bounded;
 use crate::name::{InstanceDir, InstanceName, RELEASE_DSH, RuntimeDir, StateRoot};
-use crate::record::{ChildEnd, InstanceRecord, LastRun, OsText, Transport};
+use crate::record::{ChildEnd, InstanceRecord, LastRun, OsText, RunPatch, RunStdin, Transport};
 use crate::relay::Relay;
 use crate::tool::Tool;
 use crate::{fsx, instance, launch, out, profile, release, sys, systemctl};
@@ -96,7 +99,8 @@ pub fn run(name: &str) -> u8 {
 
 /// `dshd-run poststop NAME`: completes `last-run.json` from
 /// `$SERVICE_RESULT`, `$EXIT_CODE`, `$EXIT_STATUS`, the child's end the
-/// runner left and the CLI's stop intent, clears the per-run files, then
+/// runner left, the CLI's stop intent and the run's cgroup totals, clears
+/// the per-run files, then
 /// logs [`RUN_ENDED`]. Exits non-zero when the run cannot be recorded.
 #[must_use]
 pub fn poststop(name: &str) -> u8 {
@@ -196,15 +200,21 @@ struct Launch {
     cwd: PathBuf,
     /// The composed environment `dsh` gets, and nothing else.
     environment: Vec<(OsString, OsString)>,
-    /// The recorded argv, with the pinned web port applied.
+    /// The recorded argv, with the `--patch` snapshots and the pinned web
+    /// port applied.
     args: Vec<OsString>,
     /// A web instance with no pinned port yet: pin the announced one.
     pin_port: bool,
+    /// The `run --stdin` snapshot, verified, that a headless dsh reads as
+    /// its stdin; `/dev/null` without one.
+    stdin: Option<PathBuf>,
 }
 
 impl Launch {
-    /// Checks the record, cwd, release and the live profile's transport,
-    /// refusing before `dsh` is spawned; then repoints `booted` and writes
+    /// Checks the record, cwd, release, the `--patch` and `--stdin`
+    /// snapshots and the live profile's transport, refusing before `dsh`
+    /// is spawned; then
+    /// repoints `booted` and writes
     /// the start half of `last-run.json` (`end` null), which is what a
     /// crash leaves behind for `interrupted`.
     fn prepare(raw: &str) -> Result<Self, Error> {
@@ -231,6 +241,8 @@ impl Launch {
             &dsh,
             dsh_command(&dsh, &environment, &cwd),
         )?;
+        check_patches(&place.name, &place.dir, &record)?;
+        let stdin = check_stdin(&place.name, &place.dir, &record)?;
         let (args, pin_port) = launch_args(&place.dir, &record)?;
         fsx::symlink_replace(&release, &place.dir.booted())?;
         let start = LastRun {
@@ -251,6 +263,7 @@ impl Launch {
             environment,
             args,
             pin_port,
+            stdin,
         })
     }
 
@@ -317,13 +330,23 @@ impl Launch {
         status
     }
 
-    /// `<release>/bin/dsh` with the recorded argv, stdio per transport.
+    /// `<release>/bin/dsh` with the recorded argv, stdio per transport: a
+    /// headless dsh reads the `--stdin` snapshot, when there is one.
     fn spawn(&self) -> Result<Child, Error> {
         let dsh = self.release.join(RELEASE_DSH);
         let (stdin, stdout) = match self.record.transport {
             Transport::Web => (Stdio::null(), Stdio::piped()),
             Transport::Acp => (Stdio::piped(), Stdio::piped()),
-            Transport::None => (Stdio::null(), Stdio::inherit()),
+            Transport::None => match &self.stdin {
+                Some(snapshot) => (
+                    Stdio::from(
+                        File::open(snapshot)
+                            .map_err(|source| Error::io("open", snapshot.clone(), source))?,
+                    ),
+                    Stdio::inherit(),
+                ),
+                None => (Stdio::null(), Stdio::inherit()),
+            },
         };
         let mut command = dsh_command(&dsh, &self.environment, &self.cwd);
         command.args(&self.args);
@@ -452,20 +475,100 @@ fn ending(end: ChildEnd, status: u8) -> String {
     }
 }
 
-/// The recorded argv, with the pinned port applied to a web instance, and
-/// whether the first announcement should pin one.
+/// The recorded argv with the `--patch` snapshots inserted after the
+/// profile, and the pinned port applied to a web instance; and whether the
+/// first announcement should pin one.
 fn launch_args(dir: &InstanceDir, record: &InstanceRecord) -> Result<(Vec<OsString>, bool), Error> {
     let mut args: Vec<OsString> = record
         .args
         .iter()
         .map(|arg| arg.as_os_str().to_owned())
         .collect();
+    let snapshots: Vec<PathBuf> = record
+        .patches
+        .iter()
+        .map(|patch| dir.patch(&patch.file))
+        .collect();
+    launch::insert_patches(&mut args, &snapshots);
     if record.transport != Transport::Web {
         return Ok((args, false));
     }
     let pinned = instance::read_web_port(dir)?;
     let injected = launch::inject_web_args(&mut args, pinned);
     Ok((args, injected && pinned.is_none()))
+}
+
+/// Every `--patch` snapshot the record names must be a plain file name in
+/// the instance's `patches/` and still hold the content whose digest the
+/// recipe records, so dsh gets the overlay the instance was created with
+/// or nothing. The start is refused otherwise.
+fn check_patches(
+    name: &InstanceName,
+    dir: &InstanceDir,
+    record: &InstanceRecord,
+) -> Result<(), Error> {
+    for patch in &record.patches {
+        let path = dir.patch(&patch.file);
+        let plain = Path::new(&patch.file).file_name() == Some(OsStr::new(&patch.file));
+        let held = if plain {
+            match fsx::read_bounded(&path, RunPatch::MAX_BYTES) {
+                Ok(Bounded::File(bytes)) => RunPatch::digest(&bytes) == patch.sha256,
+                Ok(Bounded::NotRegular | Bounded::TooLarge) => false,
+                Err(error) => return Err(inconsistent(name, &error.to_string())),
+            }
+        } else {
+            false
+        };
+        if !held {
+            return Err(inconsistent(
+                name,
+                &format!(
+                    "the --patch snapshot {} no longer holds the content its recipe records",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The `--stdin` snapshot the record names, if any: it is for a headless
+/// instance only and must still hold the content whose digest the recipe
+/// records, so dsh reads the task the instance was created with or is not
+/// started. Returns its path.
+fn check_stdin(
+    name: &InstanceName,
+    dir: &InstanceDir,
+    record: &InstanceRecord,
+) -> Result<Option<PathBuf>, Error> {
+    let Some(stdin) = &record.stdin else {
+        return Ok(None);
+    };
+    let path = dir.stdin();
+    if record.transport != Transport::None {
+        return Err(inconsistent(
+            name,
+            &format!(
+                "the recipe records a --stdin snapshot for transport {}, which reads none",
+                record.transport.slug()
+            ),
+        ));
+    }
+    let held = match fsx::read_bounded(&path, RunStdin::MAX_BYTES) {
+        Ok(Bounded::File(bytes)) => RunPatch::digest(&bytes) == stdin.sha256,
+        Ok(Bounded::NotRegular | Bounded::TooLarge) => false,
+        Err(error) => return Err(inconsistent(name, &error.to_string())),
+    };
+    if !held {
+        return Err(inconsistent(
+            name,
+            &format!(
+                "the --stdin snapshot {} no longer holds the content its recipe records",
+                path.display()
+            ),
+        ));
+    }
+    Ok(Some(path))
 }
 
 /// `dsh` with the composed environment and nothing inherited, in the
@@ -493,7 +596,8 @@ fn check_transport(
 ) -> Result<(), Error> {
     let profile = &record.profile;
     let dsh_home = Path::new(profile.dsh_home.as_os_str());
-    let live = profile::transport(&Tool::at("dsh", dsh), materialise, dsh_home, &profile.name)?;
+    let live =
+        profile::transport(&Tool::at("dsh", dsh), materialise, dsh_home, &profile.name)?.transport;
     if live == record.transport {
         return Ok(());
     }

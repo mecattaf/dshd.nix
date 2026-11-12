@@ -305,8 +305,9 @@ pkgs.testers.runNixOSTest {
 
     # catches: a stop by invocation id that stops a newer run of the same
     # name, whether systemd restarted the instance after a crash or dshd
-    # started it again, that refuses or misreports the run it names, or
-    # that leaves a stop intent behind when it stopped nothing
+    # started it again, that refuses or misreports the run it names, that
+    # leaves a stop intent behind when it stopped nothing, or that compares
+    # and stops without the instance lock
     with subtest("stop-invocation"):
         first = run_bg("--name fence -- web", "web")["invocationId"]
         assert first and first == unit("fence", "InvocationID"), first
@@ -347,7 +348,15 @@ pkgs.testers.runNixOSTest {
         assert third not in (first, second), third
         refused(second, third)
         receipt("fence", "stop-invocation")
-        assert dshd(f"stop --invocation {third} fence")["outcome"] == "stopped"
+        # The comparison and the stop wait for the instance lock, which
+        # dshd's own starts take: while another holder keeps it, the stop
+        # by invocation does not return.
+        run(f"rm -f ~/fence-held ~/fence-released; (flock {STATE}/fence/lock sh -c"
+            " 'touch ~/fence-held; sleep 5; touch ~/fence-released' </dev/null >/dev/null 2>&1 &)")
+        machine.wait_until_succeeds(alice("test -e ~/fence-held"), timeout=WAIT)
+        stopped = dshd(f"stop --invocation {third} fence")
+        assert stopped["outcome"] == "stopped", stopped
+        run("test -e ~/fence-released")
 
     # catches: DSH_HOME of the starting shell not reaching dsh or get, or a
     # profile that does not exist yet made by dshd rather than by dsh: in a

@@ -5,8 +5,9 @@
 # changed overlay accepted under an existing name, the same overlay refused,
 # snapshots given to dsh out of order, after the overlays typed in the argv
 # or not right after the profile, a snapshot lost by a restart systemd
-# makes, `get` reporting another digest than the file holds, a snapshot left
-# behind by `rm`, and an instance without --patch whose record changed.
+# makes, a changed snapshot handed to dsh, `get` reporting another digest
+# than the file holds, a snapshot left behind by `rm`, and an instance
+# without --patch whose record changed.
 { self, pkgs }:
 let
   vm = import ./vm-node.nix { inherit self pkgs; };
@@ -120,6 +121,18 @@ pkgs.testers.runNixOSTest {
         receipt("ordered", "web-restart-keeps-snapshot")
         dshd("stop ordered")
 
+    # catches: a start that hands dsh a snapshot whose content changed, a
+    # refusal that is not start-failed or leaves no reason in the run's
+    # journal, or a web instance that systemd restarts after the refusal
+    with subtest("changed snapshot refused at start"):
+        run(f"printf z >> {x}")
+        code, err = attempt("dshd start --json ordered")
+        assert code == 1 and json.loads(err)["error"]["kind"] == "start-failed", err
+        assert unit("ordered", "ExecMainStatus") == "78" and unit("ordered", "NRestarts") == "0"
+        assert unit("ordered", "ActiveState") == "failed"
+        assert "no longer holds the content" in run("dshd read ordered 2>&1"), "the journal names the refusal"
+        receipt("ordered", "changed-snapshot-refused")
+
     # catches: get reporting a digest the snapshot does not have, or a
     # snapshot left behind by rm
     with subtest("get and rm"):
@@ -144,7 +157,7 @@ pkgs.testers.runNixOSTest {
         receipt("plain", "no-patch-no-change")
 
     finish([
-        "changed-content-refused", "get-and-rm", "no-patch-no-change", "order-and-position",
+        "changed-content-refused", "changed-snapshot-refused", "get-and-rm", "no-patch-no-change", "order-and-position",
         "same-content-same-recipe", "snapshot-survives-source", "web-restart-keeps-snapshot",
     ])
   '';

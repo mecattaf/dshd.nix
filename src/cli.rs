@@ -129,13 +129,17 @@ pub struct LsArgs {
     pub bare: bool,
 }
 
-/// `dshd read NAME [-n LINES] [-f]`.
+/// `dshd read NAME [-n LINES | --head LINES] [-f]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadArgs {
     /// The instance.
     pub name: InstanceName,
-    /// `-n LINES`: lines to show (default [`READ_DEFAULT_LINES`]).
+    /// `-n LINES` or `--head LINES`: lines to show (default
+    /// [`READ_DEFAULT_LINES`]).
     pub lines: u32,
+    /// `--head`: the run's oldest `lines` lines, from its start, instead of
+    /// its newest.
+    pub head: bool,
     /// `-f`: keep printing new lines until the run ends.
     pub follow: bool,
 }
@@ -190,7 +194,7 @@ pub enum Verb {
     Ls(LsArgs),
     /// `get NAME`.
     Get(NameArgs),
-    /// `read NAME [-n LINES] [-f]`.
+    /// `read NAME [-n LINES | --head LINES] [-f]`.
     Read(ReadArgs),
     /// `wait NAME [--timeout S]`.
     Wait(WaitArgs),
@@ -392,6 +396,7 @@ mod tests {
         let read = Verb::Read(ReadArgs {
             name,
             lines: READ_DEFAULT_LINES,
+            head: false,
             follow: false,
         });
         let rows = [

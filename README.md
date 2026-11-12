@@ -232,7 +232,7 @@ reference for each verb.
 | `update NAME` | `-R` | `updated`, `unchanged` | Points `current` at what the recorded release name resolves to now and prints `nix store diff-closures` between the two releases; `-R` also restarts a running web or ACP instance. Refused for an instance created from a store path. |
 | `ls` | | | Every instance: `NAME: state(release)`, with the command to run when one is needed. |
 | `get NAME` | | | Everything dshd knows about one instance: the unit, the recipe, the release links, the profile and its DSH home, the web address or the ACP relay's report, how the last run ended, and whether linger is on. |
-| `read NAME` | `-n LINES`, `-f` | | The journal of the current run, or of the last one, as DSH wrote it (200 lines by default). `-f` follows until the run ends. |
+| `read NAME` | `-n LINES`, `--head LINES`, `-f` | | The journal of the current run, or of the last one, as DSH wrote it: its newest 200 lines by default, or with `--head` its first ones. `-f` follows until the run ends. |
 | `wait NAME` | `--timeout S` | `ended`, `still-running` | Waits until the current run ends, then exits as `dsh` did. A run that ended already is reported at once. |
 | `attach NAME` | `--via web\|acp`, `--takeover`, `--print-url`, `--open` | | Never starts anything. Web: prints the origin, or the full URL with `--print-url`, or opens it with `--open`. ACP: runs the relay client of the instance's own release on stdio. |
 | `label NAME K=V...` | | `labelled` | Sets labels; an empty value removes the key. `dsh` never sees labels, and the instance keeps running. |
@@ -504,10 +504,14 @@ tunnel changes the origin, so the browser logs in again through it.
 
 **Reading output.** `dshd read NAME` prints the journal of the current or
 last run; dshd writes no log files. Each run starts with the journal line
-`dshd-run: run started` and ends with `dshd-run: run ended: RESULT`. When
-the lines do not reach back to the run's start, because of `-n` or because
-journald rotated them away, stderr says so and `read --json` reports
-`"complete": false`. An ACP instance's journal holds DSH's stderr only,
+`dshd-run: run started` and ends with `dshd-run: run ended: RESULT`.
+`read` prints the newest lines; `--head N` prints the run's first N
+instead, so what a long run printed at its start is one bounded read
+away, however much it printed since. `"complete": true` in `read --json`
+means the lines are the whole run so far. When they are not, because they
+do not reach back to the run's start (`-n`, or journald rotated them away)
+or newer lines follow them (`--head`), stderr says which and `complete` is
+false. An ACP instance's journal holds DSH's stderr only,
 since its stdout is the ACP channel, and `read` says so on stderr.
 `systemctl --user status dshd@NAME.service` shows the unit, and the last
 line of `/proc/<pid>/cgroup` of any process names the instance that owns

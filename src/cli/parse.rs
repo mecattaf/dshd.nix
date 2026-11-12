@@ -105,7 +105,7 @@ impl Word {
             Self::Start => &["--rerun", "--json", "--text"],
             Self::Stop => &["--invocation", "--json", "--text"],
             Self::Update => &["--restart", "--json", "--text"],
-            Self::Read => &["--lines", "--follow", "--json"],
+            Self::Read => &["--lines", "--head", "--follow", "--json"],
             Self::Wait => &["--timeout", "--json", "--text"],
             Self::Attach => &["--via", "--open", "--print-url", "--takeover", "--json"],
             Self::Help => &[],
@@ -133,6 +133,7 @@ struct Raw {
     labels: Vec<OsString>,
     patches: Vec<OsString>,
     lines: Option<OsString>,
+    head: Option<OsString>,
     timeout: Option<OsString>,
     via: Option<OsString>,
     invocation: Option<OsString>,
@@ -224,6 +225,10 @@ fn lex(head: Vec<OsString>) -> Result<Raw, Error> {
             Arg::Short('n') | Arg::Long("lines") => {
                 raw.mark("--lines", true)?;
                 raw.lines = Some(value(&mut parser)?);
+            }
+            Arg::Long("head") => {
+                raw.mark("--head", true)?;
+                raw.head = Some(value(&mut parser)?);
             }
             Arg::Long("via") => {
                 raw.mark("--via", true)?;
@@ -438,27 +443,44 @@ fn label(rest: Vec<OsString>) -> Result<LabelArgs, Error> {
 }
 
 fn read(raw: &Raw, rest: Vec<OsString>) -> Result<ReadArgs, Error> {
-    let lines = match &raw.lines {
+    let (flag, given) = match (&raw.lines, &raw.head) {
+        (Some(_), Some(_)) => {
+            return Err(Error::InvalidArgument(
+                "-n and --head exclude each other".into(),
+            ));
+        }
+        (Some(value), None) => ("-n", Some(value)),
+        (None, Some(value)) => ("--head", Some(value)),
+        (None, None) => ("-n", None),
+    };
+    let lines = match given {
         Some(value) => value
             .to_str()
             .and_then(|text| text.parse::<u32>().ok())
             .ok_or_else(|| {
                 Error::InvalidArgument(format!(
-                    "-n takes a number of lines, not {}",
+                    "{flag} takes a number of lines, not {}",
                     OsText::new(value).display()
                 ))
             })?,
         None => READ_DEFAULT_LINES,
     };
+    let head = raw.head.is_some();
     let follow = raw.has("--follow");
     if follow && raw.has("--json") {
         return Err(Error::InvalidArgument(
             "read --follow prints text; read --json prints the lines once".into(),
         ));
     }
+    if follow && head {
+        return Err(Error::InvalidArgument(
+            "--head and --follow exclude each other".into(),
+        ));
+    }
     Ok(ReadArgs {
         name: one_name("read", rest)?,
         lines,
+        head,
         follow,
     })
 }

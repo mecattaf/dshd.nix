@@ -77,6 +77,7 @@ $ dshd read batch
 ```
 $ dshd read batch
 $ dshd read -n 50 batch
+$ dshd read --head 20 --json batch
 $ dshd read --follow batch
 $ dshd read --json batch
 ```
@@ -84,7 +85,10 @@ $ dshd read --json batch
 `read` prints the journal of the current run, or of the last one when the
 instance is stopped. If the lines do not reach back to the start of the
 run, stderr says `[dshd] incomplete: older output may be missing`; widen
-with `-n`. For an acp instance the journal holds dsh's stderr only, since
+with `-n`. What a long run printed first, such as an id it announced at
+its start, is in `--head N`, its first N lines, which stay the same however
+long the run goes on; `complete` is then false when newer lines follow.
+For an acp instance the journal holds dsh's stderr only, since
 its stdout is the ACP channel. `read --json` gives
 `{"name","invocationId","complete","streams","lines"}`.
 

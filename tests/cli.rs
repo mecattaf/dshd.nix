@@ -7,7 +7,8 @@
 //! `%RELEASE%` is a release store path built from the stub dsh, named by
 //! `DSHD_GOLDEN_RELEASE`. Without it the cases are only checked for their
 //! shape, and the harness says so on stderr. In every case the DSH home is
-//! the same tree after `dshd` ran as before: dshd never writes there.
+//! the same tree after `dshd` ran as before: dshd never writes there. So is
+//! every path a case lists in `kept`.
 
 mod tree;
 
@@ -42,8 +43,8 @@ const FAKES: [&str; 4] = ["systemctl", "journalctl", "nix-store", "xdg-open"];
 /// The utilities the fakes run, linked from the test's own `PATH`.
 const UTILITIES: [&str; 7] = ["cat", "mkdir", "ln", "rm", "head", "tail", "sleep"];
 /// What a case directory may hold.
-const CASE_ENTRIES: [&str; 10] = [
-    "argv", "exit", "stdout", "stderr", "env", "root", "links", "absent", "calls", "gone",
+const CASE_ENTRIES: [&str; 11] = [
+    "argv", "exit", "stdout", "stderr", "env", "root", "links", "absent", "calls", "gone", "kept",
 ];
 const ROOT_TOKEN: &str = "%ROOT%";
 const RELEASE_TOKEN: &str = "%RELEASE%";
@@ -69,7 +70,7 @@ const RECORD_MODE: u32 = 0o600;
 
 // catches: a changed output, outcome, error kind, exit code or tool argv in a golden case, a malformed or
 // renamed cited case, a creating shell's secret leaking past the record, a release variable naming nothing,
-// and any write dshd makes in the DSH home
+// and any write dshd makes in the DSH home or in a path a case keeps
 #[test]
 fn golden_cases_hold_without_drift() -> TestResult {
     let cases = case_names()?;
@@ -302,6 +303,49 @@ impl Case {
         Ok(())
     }
 
+    /// The paths of the case's `kept`, each with every entry under it as
+    /// [`tree`] describes them. `before` is the run's start, when every
+    /// path must exist, so a misspelt one cannot pass unseen.
+    fn kept(&self, before: bool) -> TestResult<BTreeMap<PathBuf, String>> {
+        let mut entries = BTreeMap::new();
+        for relative in self
+            .read("kept")?
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| !line.is_empty())
+        {
+            let path = self.under_root(relative);
+            if before && fs::symlink_metadata(&path).is_err() {
+                return Err(format!("kept {relative} does not exist before the run").into());
+            }
+            entries.extend(tree(&path)?);
+        }
+        Ok(entries)
+    }
+
+    /// Records each entry that differs between two trees as a change dshd
+    /// made, `place` saying where.
+    fn changes(
+        &self,
+        place: &str,
+        before: &BTreeMap<PathBuf, String>,
+        after: &BTreeMap<PathBuf, String>,
+        differences: &mut Vec<String>,
+    ) {
+        let paths: BTreeSet<&PathBuf> = before.keys().chain(after.keys()).collect();
+        for path in paths {
+            let (was, is) = (before.get(path), after.get(path));
+            if was != is {
+                differences.push(format!(
+                    "dshd changed {}{place}: {} became {}",
+                    self.normalize(&path.display().to_string()),
+                    was.map_or("nothing", String::as_str),
+                    is.map_or("nothing", String::as_str)
+                ));
+            }
+        }
+    }
+
     /// Runs `dshd` and lists how its results differ from the case's.
     fn run(&self) -> TestResult<Vec<String>> {
         let argv: Vec<String> = self
@@ -312,22 +356,22 @@ impl Case {
             .collect();
         let home = self.under_root(DSH_HOME);
         let home_before = tree(&home)?;
+        let kept_before = self.kept(true)?;
         let output = self.dshd(&argv)?;
         self.record_actual(&output)?;
         let mut differences = Vec::new();
-        let home_after = tree(&home)?;
-        let paths: BTreeSet<&PathBuf> = home_before.keys().chain(home_after.keys()).collect();
-        for path in paths {
-            let (was, is) = (home_before.get(path), home_after.get(path));
-            if was != is {
-                differences.push(format!(
-                    "dshd changed {} in the DSH home: {} became {}",
-                    self.normalize(&path.display().to_string()),
-                    was.map_or("nothing", String::as_str),
-                    is.map_or("nothing", String::as_str)
-                ));
-            }
-        }
+        self.changes(
+            " in the DSH home",
+            &home_before,
+            &tree(&home)?,
+            &mut differences,
+        );
+        self.changes(
+            ", which the case keeps",
+            &kept_before,
+            &self.kept(false)?,
+            &mut differences,
+        );
         let exit: i32 = self.read("exit")?.ok_or("no exit")?.trim().parse()?;
         if output.status.code() != Some(exit) {
             differences.push(format!(

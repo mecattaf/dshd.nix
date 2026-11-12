@@ -1,4 +1,5 @@
 read
+--json
 -n
 2
 web-1

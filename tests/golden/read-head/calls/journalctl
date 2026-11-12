@@ -1,1 +1,1 @@
---user _SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef -q -o cat -n +3
+--user _SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef -q -o json --all --output-fields=MESSAGE,_LINE_BREAK -n +3

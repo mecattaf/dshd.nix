@@ -61,7 +61,9 @@ instance one transport. A bundle is matched by the part of its name after
 the last `/`, so `@deepseek-ai/dsh-web-app` and `dsh-web-app` are the same;
 when a profile lists several, `dsh-headless` wins, then `dsh-web-app`, then
 `dsh-acp-app`. The transport decides how the instance becomes ready, how
-you attach to it and whether a crash restarts it.
+you attach to it and whether a crash restarts it. DSH mounts every bundle
+a profile lists, so `run` warns about a profile that lists more than one
+app; see [one configuration, several apps](#one-configuration-several-apps).
 
 | Profile (DSH bundle) | Transport | Ready when | stdin | stdout | Attach | Restart after a crash | Restrictions |
 |---|---|---|---|---|---|---|---|
@@ -289,6 +291,36 @@ instance in that home; dshd records the resolved home, sets it explicitly
 for `dsh`, and shows it in `get`. Credentials and sessions stay in the
 home and are shared live by every instance of it. There is no account
 registry, profile store or `--home` flag.
+
+**Per run.** A `run` chooses its profile and its overlays with DSH's own
+launcher flags before the app's arguments: the profile word or
+`--profile`, and any number of `--patch FILE`, as in
+`dshd run --bg --name task-7 -- worker --patch ./fast.yml "summarise the open issues"`.
+They are part of the argv, so the recipe records them: every start,
+`start --rerun` included, boots the same profile with the same overlays,
+read live at that start, and `get` and `ls` show them as `profile` and
+`patches`. The same name with another profile or another overlay is a
+different recipe, refused with `exists-different-recipe`. DSH resolves a
+relative `--patch` against the instance's working directory. dshd has no
+`--patch` or `--transport` flag of its own.
+
+### One configuration, several apps
+
+The app is part of the profile. DSH composes every bundle a profile's
+`package.json` lists into one tree, so a profile that lists `dsh-headless`
+and `dsh-web-app` mounts both apps in one process, and the headless layer
+turns off rows of the whole tree, `authorization` and `credentials` among
+them. `run` warns about such a profile, and dshd holds it by the first
+transport in the order above. The transport is what DSH boots, so no flag
+can choose it per run.
+
+To run one configuration both as a web instance and as headless tasks,
+give each app its own profile, listing the same other bundles and
+dependencies. Put the shared settings in a bundle of your own, any package
+whose `package.json` has `dsh.bundle.patch`, or in the home layer
+`$DSH_HOME/cordis.patch.yml`, which DSH applies to every profile of the
+home; put what varies from task to task, such as a provider or a model, in
+a `--patch` of the run.
 
 ## Releases, update and retention
 
@@ -529,13 +561,14 @@ line, or `{"error":{"kind":KIND,"message":TEXT,"hint":COMMAND|null}}`.
 - `get` prints the status object: the unit (`state`, `activeState`,
   `subState`, `result`, `mainPid`, `restarts`, `invocationId`, `since`),
   the recipe (`transport`, `cwd`, `args`, `environmentNames`, `labels`),
-  `resources`, `release`, `profile`, `web` or `acp`, `lastRun`, `enabled`, `linger` and
-  `remedy`.
+  `resources`, `release`, `profile` (`name`, `dshHome`, and `patches`, the
+  `--patch` overlays of the argv), `web` or `acp`, `lastRun`, `enabled`,
+  `linger` and `remedy`.
 - A mutating verb prints the status object plus `outcome` and `warnings`;
   `run` and `wait`, once they followed a run, add `exitCode`, `signal` and
   `reason`.
 - `ls` prints one object:
-  `{"instances":[{"name","state","transport","release","releaseState","enabled","since","remedy"}],"linger":BOOL,"warnings":[...]}`.
+  `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy"}],"linger":BOOL,"warnings":[...]}`.
 - `read --json` prints `{"name","invocationId","complete","streams","lines"}`;
   `attach --json` on a web instance prints `{"origin","port","urlFile"}`,
   and `url` with `--print-url`.
@@ -585,6 +618,8 @@ one with a field it does not know rather than guess.
 - One ACP controller at a time; `--takeover` replaces it.
 - SDK and terminal profiles are refused: they need the client or the
   terminal that starts them.
+- One app per profile: DSH mounts every bundle a profile lists, so the
+  transport belongs to the profile, not to the run.
 - No terminal: dshd allocates no TTY, and a profile that needs one gets
   none.
 - ACP readiness means spawned and listening, not initialised; the first

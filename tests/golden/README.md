@@ -186,6 +186,10 @@ profile.
 The complete error kind/exit table is in `src/error/unit_tests.rs`.
 An `_SCRUBBED` environment value must reach neither output nor any file
 under the case root, including the instance record.
+`run-patch`, `run-patch-different-recipe`, `get-patches` and
+`ls-patches` pin a run's `--patch` overlays in the recipe and in the
+reports, and `run-several-apps` the warning for a profile that lists two
+apps.
 
 `calls/systemctl-queries` optionally pins read-only calls, including their
 batching. Other tool traces are always compared; an absent expectation

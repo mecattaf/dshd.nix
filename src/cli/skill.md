@@ -35,6 +35,13 @@ transport.
   under the same name is refused with `exists-different-recipe`.
 - SDK profiles and terminal apps are refused with `unsupported-profile`:
   they need the client or the terminal that starts them.
+- Vary one run with `--patch FILE` after the profile word, as in
+  `dshd run --bg --name task-7 -- worker --patch ./fast.yml "summarise the open issues"`;
+  the overlay is part of the recipe, every start applies it, and `get` and
+  `ls` show it in `patches`.
+- One app per profile: DSH mounts every bundle a profile lists, so a
+  profile with two apps gets a warning and the transport of the first. A
+  web instance and headless tasks of one configuration need two profiles.
 
 ## Wait for a headless task
 
@@ -141,7 +148,7 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   exited, failed, interrupted, or null while the run is in progress.
   `resources` contains live systemd counters, or null values when unavailable.
   `remedy` is the command to run next, or null.
-- `ls`: `{"instances":[{"name","state","transport","release","releaseState","enabled","since","remedy"}],"linger","warnings"}`.
+- `ls`: `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy"}],"linger","warnings"}`.
 - Mutating verbs: the status object plus `outcome` and `warnings`.
   `outcome` is one of created, started, already-running, stopped,
   already-stopped, restarted, updated, unchanged, enabled, already-enabled,

@@ -54,19 +54,28 @@ const FROM_INSIDE: &str =
     "Run from inside the instance, the command ends with the instance, and systemd
 still completes the action; dshd get NAME from outside shows the result.";
 
-const RUN: &str = r"Usage: dshd run [--bg] [--name NAME] [--release RELEASE] [--cwd DIR] [--label KEY=VALUE]... [--patch FILE]... [--timeout SECONDS] [--json | --text] -- DSH ARGUMENTS
+const RUN: &str = r"Usage: dshd run [--bg] [--name NAME] [--release RELEASE] [--cwd DIR] [--label KEY=VALUE]... [--patch FILE]... [--stdin FILE] [--timeout SECONDS] [--json | --text] -- DSH ARGUMENTS
 
 Creates an instance that runs `dsh DSH ARGUMENTS` in DIR with this shell's
 environment, as the unit dshd@NAME, and starts it. A NAME that exists with
-the same recipe is started and its labels are set; one with a different
+the same recipe is started and then its labels are set, so a run that is
+refused or fails to start leaves them as they were; one with a different
 recipe is refused. The recipe is the directory, the arguments, the profile,
-the transport, the content of each --patch FILE, and the release when
---release is given. An instance that runs already is reported, not
+the transport, the content of each --patch FILE and of --stdin FILE, and
+the release when --release is given. An instance that runs already is reported, not
 restarted.
 
 --patch FILE copies FILE into the instance at creation; every start hands
 dsh that copy with --patch right after the profile, before the --patch
-flags in DSH ARGUMENTS, and FILE is never read again.
+flags in DSH ARGUMENTS, and FILE is never read again. A relative FILE is
+read from the current directory, not from --cwd; dsh resolves a --patch in
+DSH ARGUMENTS against --cwd.
+
+--stdin FILE copies FILE, or with - this command's own stdin, into a
+headless instance at creation; every start gives dsh that copy as its
+stdin, which dsh reads as the task when the task is -. A task larger than
+one argument may be goes this way. Without --stdin, dsh's stdin is
+/dev/null.
 
 dsh runs the profile as it is in its DSH home at every start. dshd only
 reads the profile's bundles, which fix the transport at creation; a shipped
@@ -88,6 +97,8 @@ start --rerun NAME does that on purpose.
   --label KEY=VALUE   metadata shown by get and ls; KEY matches [a-z0-9._-]+
   --patch FILE        an overlay to snapshot, a regular file of at most 1 MiB;
                       repeatable, applied in order
+  --stdin FILE        a headless dsh's stdin to snapshot, a regular file of at
+                      most 1 MiB, or - for this command's stdin
   --timeout SECONDS   how long a foreground run follows its task; default 180
   --json, --text      the output format";
 
@@ -213,11 +224,21 @@ const DISABLE: &str = r"Usage: dshd disable [--json | --text] NAME
 
 Removes dshd@NAME from dshd.target. Stops nothing.";
 
-const RM: &str = r"Usage: dshd rm [--json | --text] NAME
+const RM: &str = r"Usage: dshd rm [--invocation ID] [--json | --text] NAME
 
 Deletes a stopped instance: its state directory and its release roots,
 which the next garbage collection may then free. The profile and DSH's own
-sessions stay.";
+sessions stay.
+
+--invocation ID removes the instance only when its last run was ID, the id
+dshd get NAME shows as invocationId or lastRun.invocationId. A unit that
+runs another invocation, or is stopped after another run or none, is
+refused with not-running, and a unit that still runs ID with
+instance-running; nothing is removed. dshd's own starts of NAME wait until
+the comparison and the removal are done.
+
+  --invocation ID  the 32 hex digits of the last run
+  --json, --text   the output format";
 
 const HELP: &str = r"Usage: dshd help [VERB]
 
@@ -296,6 +317,10 @@ mod tests {
                 candidates: None,
             },
             Error::CreateWithRun(name()),
+            Error::PatchUnreadable {
+                path: name(),
+                reason: name(),
+            },
             Error::PathPinned(name()),
             Error::NotFound(name()),
             Error::ReleaseNotFound(name()),

@@ -47,6 +47,14 @@ pub enum Error {
         /// Why it cannot be snapshotted.
         reason: String,
     },
+    /// `run --stdin FILE` names no readable regular file (or stdin) of at
+    /// most 1 MiB.
+    StdinUnreadable {
+        /// The path as given, `-` for dshd's own stdin.
+        path: String,
+        /// Why it cannot be snapshotted.
+        reason: String,
+    },
     /// No such instance.
     NotFound(String),
     /// No such release in the registry.
@@ -69,8 +77,9 @@ pub enum Error {
     UnitMasked(String),
     /// The verb needs the instance running.
     NotRunning(String),
-    /// `stop --invocation ID`: the unit runs another invocation, or it is
-    /// stopped and its last run was another one or none.
+    /// `stop --invocation ID` or `rm --invocation ID`: the unit runs
+    /// another invocation, or it is stopped and its last run was another
+    /// one or none.
     OtherInvocation(Box<OtherInvocation>),
     /// Another controller holds the ACP relay.
     AttachedElsewhere(String),
@@ -149,7 +158,8 @@ pub struct RecipeDifference {
     pub fields: Vec<(&'static str, String, String)>,
 }
 
-/// What `stop --invocation` found instead of the run it names.
+/// What `stop --invocation` or `rm --invocation` found instead of the run
+/// it names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OtherInvocation {
     /// The instance.
@@ -197,7 +207,8 @@ impl Error {
             Self::InvalidArgument(_)
             | Self::CreateWithRun(_)
             | Self::PathPinned(_)
-            | Self::PatchUnreadable { .. } => "invalid-argument",
+            | Self::PatchUnreadable { .. }
+            | Self::StdinUnreadable { .. } => "invalid-argument",
             Self::NeedsTarget { .. } => "needs-target",
             Self::NotFound(_) => "not-found",
             Self::ReleaseNotFound(_) => "release-not-found",
@@ -236,7 +247,8 @@ impl Error {
             | Self::NeedsTarget { .. }
             | Self::CreateWithRun(_)
             | Self::PathPinned(_)
-            | Self::PatchUnreadable { .. } => 2,
+            | Self::PatchUnreadable { .. }
+            | Self::StdinUnreadable { .. } => 2,
             Self::NotFound(_) | Self::ReleaseNotFound(_) => 3,
             Self::ExistsDifferentRecipe(_)
             | Self::InstanceRunning(_)
@@ -269,8 +281,9 @@ impl Error {
             Self::InvalidArgument(_) => Some("dshd help".into()),
             Self::NeedsTarget { .. } | Self::NotFound(_) => Some("dshd ls".into()),
             Self::CreateWithRun(argv) => Some(format!("dshd run --bg -- {argv}")),
-            Self::PatchUnreadable { path, .. } => Some(format!(
-                "--patch takes a readable regular file of at most 1 MiB; check {path}"
+            Self::PatchUnreadable { .. } => Some("dshd help run".into()),
+            Self::StdinUnreadable { path, .. } => Some(format!(
+                "--stdin takes a readable regular file of at most 1 MiB, or - for dshd's own stdin; check {path}"
             )),
             Self::ReleaseNotFound(_) => Some("ls /etc/dshd/releases".into()),
             Self::PathPinned(name) | Self::InconsistentState { name, .. } => Some(format!("dshd rm {name}")),
@@ -327,6 +340,7 @@ impl fmt::Display for Error {
                 "{name} is pinned to a release path; remove it, then run it again with --release RELEASE"
             ),
             Self::PatchUnreadable { path, reason } => write!(f, "--patch {path}: {reason}"),
+            Self::StdinUnreadable { path, reason } => write!(f, "--stdin {path}: {reason}"),
             Self::NotFound(name) => write!(f, "no instance named {name}"),
             Self::ReleaseNotFound(name) => write!(f, "no release named {name}"),
             Self::ReleaseInvalid { release, reason } => {

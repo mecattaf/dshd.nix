@@ -8,8 +8,9 @@
 # writes outside the instance or in the DSH home, an ending that misnames
 # who stopped it, a secret outside its 0600 record, nix needed at start,
 # Ctrl+C of a foreground run reaching the instance, output lost before the
-# exit, a self-restart that loses the instance, a stop by invocation id
-# that reaches a newer run of the name, and linger hidden or changed.
+# exit, a self-restart that loses the instance, a stop or removal by
+# invocation id that reaches a newer run of the name, and linger hidden or
+# changed.
 { self, pkgs }:
 let
   vm = import ./vm-node.nix { inherit self pkgs; };
@@ -305,8 +306,9 @@ pkgs.testers.runNixOSTest {
 
     # catches: a stop by invocation id that stops a newer run of the same
     # name, whether systemd restarted the instance after a crash or dshd
-    # started it again, that refuses or misreports the run it names, or
-    # that leaves a stop intent behind when it stopped nothing
+    # started it again, that refuses or misreports the run it names, that
+    # leaves a stop intent behind when it stopped nothing, or that compares
+    # and stops without the instance lock
     with subtest("stop-invocation"):
         first = run_bg("--name fence -- web", "web")["invocationId"]
         assert first and first == unit("fence", "InvocationID"), first
@@ -347,7 +349,26 @@ pkgs.testers.runNixOSTest {
         assert third not in (first, second), third
         refused(second, third)
         receipt("fence", "stop-invocation")
-        assert dshd(f"stop --invocation {third} fence")["outcome"] == "stopped"
+        # A removal by invocation id keeps the instance while its run goes
+        # on, and after a newer run; it removes the one whose last run it
+        # names.
+        code, err = attempt(f"dshd rm --json --invocation {third} fence")
+        assert code == 4 and json.loads(err)["error"]["kind"] == "instance-running", err
+        # The comparison and the stop wait for the instance lock, which
+        # dshd's own starts take: while another holder keeps it, the stop
+        # by invocation does not return.
+        run(f"rm -f ~/fence-held ~/fence-released; (flock {STATE}/fence/lock sh -c"
+            " 'touch ~/fence-held; sleep 5; touch ~/fence-released' </dev/null >/dev/null 2>&1 &)")
+        machine.wait_until_succeeds(alice("test -e ~/fence-held"), timeout=WAIT)
+        stopped = dshd(f"stop --invocation {third} fence")
+        assert stopped["outcome"] == "stopped", stopped
+        run("test -e ~/fence-released")
+        code, err = attempt(f"dshd rm --json --invocation {second} fence")
+        assert code == 5 and "its last run was " + third in err, err
+        assert get("fence")["lastRun"]["invocationId"] == third
+        assert dshd(f"rm --invocation {third} fence")["outcome"] == "removed"
+        code, err = attempt("dshd get --json fence")
+        assert code == 3 and json.loads(err)["error"]["kind"] == "not-found", err
 
     # catches: DSH_HOME of the starting shell not reaching dsh or get, or a
     # profile that does not exist yet made by dshd rather than by dsh: in a
@@ -387,7 +408,7 @@ pkgs.testers.runNixOSTest {
         assert native_args(child("overlaid")) == want, native_args(child("overlaid"))
         assert get("overlaid")["profile"]["patches"] == overlays, get("overlaid")["profile"]
         entry = next(item for item in listing() if item["name"] == "overlaid")
-        assert (entry["profile"], entry["patches"]) == ("acp", overlays), entry
+        assert (entry["profile"], entry["profilePatches"]) == ("acp", overlays), entry
         dshd("stop overlaid")
         assert dshd("start overlaid")["outcome"] == "started"
         assert native_args(child("overlaid")) == want, native_args(child("overlaid"))
@@ -497,6 +518,35 @@ pkgs.testers.runNixOSTest {
         assert code == 0 and "newer output follows" in note, note
         receipt("quick", "read-head")
 
+    # catches: one stdout line longer than journald's LineMax (48K by
+    # default) shown as the pieces journald stored it in, by the followed
+    # run, by read, or by a -n or --head window that starts or ends inside it
+    with subtest("read a long line"):
+        long = "a" * 60000
+        made = '"$(printf %60000s | tr " " a)"'
+
+        def at(lines: list[str]) -> list[int]:
+            """Where the stub's long line is: one line, whole."""
+            pieces = [i for i, line in enumerate(lines) if "aaaa" in line]
+            assert len(pieces) == 1 and lines[pieces[0]].endswith(long), [len(lines[i]) for i in pieces]
+            return pieces
+
+        out = run(f"env DSH_STUB_MODE=headless dshd run --text --name long -- headless {made}")
+        at(out.splitlines())
+        whole = json.loads(run("dshd read --json long"))
+        assert whole["complete"] is True, whole["complete"]
+        [i] = at(whole["lines"])
+        after = len(whole["lines"]) - i
+        tail = json.loads(run(f"dshd read --json -n {after} long"))
+        assert tail["lines"] == whole["lines"][i:], [len(line) for line in tail["lines"]]
+        if after > 1:
+            newer = json.loads(run(f"dshd read --json -n {after - 1} long"))
+            assert newer["lines"] == whole["lines"][i + 1 :], [len(line) for line in newer["lines"]]
+        head = json.loads(run(f"dshd read --json --head {i + 1} long"))
+        assert head["lines"] == whole["lines"][: i + 1], [len(line) for line in head["lines"]]
+        assert head["complete"] is (after == 1), head["complete"]
+        receipt("long", "read-long-line")
+
     # catches: a self-restart that loses the instance or resends a prompt:
     # the agent's own `dshd restart` ends with it, systemd completes the job
     with subtest("self-restart"):
@@ -536,6 +586,7 @@ pkgs.testers.runNixOSTest {
 
     finish([
         "read-head",
+        "read-long-line",
         "P1.1", "P1.2", "P1.3", "P1.5", "P1.6", "P1.7", "P2.2", "P2.4", "P2.5", "P2.6", "P3.4",
         "P4.1", "P4.2", "P4.3", "linger-off", "run-interrupt", "run-output", "run-patch", "self-restart",
         "stop-invocation",

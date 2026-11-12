@@ -1,0 +1,2 @@
+dshd: web-1 is running
+  remedy: dshd stop web-1

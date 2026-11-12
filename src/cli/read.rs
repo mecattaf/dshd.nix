@@ -1,11 +1,13 @@
 //! `dshd read NAME [-n LINES | --head LINES] [-f]`: the journal of the
 //! instance's current run, or of its last one, by the run's invocation id,
-//! as dsh wrote it: its newest lines, or with `--head` its oldest. A note on
+//! as dsh wrote it, a line journald broke at `LineMax` joined again: its
+//! newest lines, or with `--head` its oldest. A note on
 //! stderr says when the lines are not the whole run: they do not reach back
 //! to the runner's first line, or newer lines follow them; `-f` keeps
 //! printing until the run ends.
 
 use super::follow::{self, Since};
+use super::journal::{self, Entry, Joiner};
 use super::status;
 use crate::cli::report::ReadReport;
 use crate::cli::{Context, ReadArgs};
@@ -80,11 +82,29 @@ struct Window {
     newer: bool,
 }
 
+/// journalctl reads `-n` as a C int, so an ask stops here.
+const MOST_ENTRIES: u32 = i32::MAX.unsigned_abs();
+
 /// The newest `count` lines; one more call reads the run's first line, to
-/// tell whether they reach back to it.
+/// tell whether they reach back to it. One entry more than `count` is
+/// asked for: when journald broke it at `LineMax`, the entries after it up
+/// to the end of that line are left out. A window with fewer whole lines
+/// than `count` asks for twice the entries, until it reaches the run's
+/// first entry.
 fn newest(ctx: &Context, id: &str, count: u32) -> Result<Window, Error> {
-    let lines = capture(ctx, id, &count.to_string())?;
-    let first = capture(ctx, id, "+1")?;
+    let shown = usize::try_from(count).unwrap_or(usize::MAX);
+    let mut ask = count.saturating_add(1).min(MOST_ENTRIES);
+    let mut lines = loop {
+        let entries = capture(ctx, id, &ask.to_string())?;
+        let whole = entries.len() < asked(ask);
+        let lines = after_first(entries, whole);
+        if lines.len() >= shown || whole || ask == MOST_ENTRIES {
+            break lines;
+        }
+        ask = ask.saturating_mul(2).min(MOST_ENTRIES);
+    };
+    lines.drain(..lines.len().saturating_sub(shown));
+    let first = journal::lines(capture(ctx, id, "+1")?);
     let from_start = first
         .first()
         .is_some_and(|line| line.starts_with(RUN_STARTED) && lines.first() == Some(line));
@@ -95,18 +115,51 @@ fn newest(ctx: &Context, id: &str, count: u32) -> Result<Window, Error> {
     })
 }
 
-/// The oldest `count` lines, in one call that asks for one line more, to
-/// tell whether newer ones follow. journalctl reads `-n` as a C int, so the
-/// ask stops at [`i32::MAX`].
+/// The lines of the newest entries of a run. Unless they are `whole`, from
+/// the run's first entry, the oldest entry only tells whether the next one
+/// starts a line: it is left out, and when journald broke the line there,
+/// so are the rest of that line's pieces.
+fn after_first(entries: Vec<Entry>, whole: bool) -> Vec<String> {
+    let mut entries = entries.into_iter();
+    if !whole && entries.next().is_some_and(|first| first.broken()) {
+        for piece in entries.by_ref() {
+            if !piece.broken() {
+                break;
+            }
+        }
+    }
+    journal::lines(entries)
+}
+
+/// The oldest `count` lines, asking for one entry more, to tell whether
+/// newer ones follow. When journald broke lines at `LineMax`, the entries
+/// may end inside a line or hold fewer lines than that: the ask doubles
+/// until it shows a line after the `count`th, or reaches the run's end.
 fn oldest(ctx: &Context, id: &str, count: u32) -> Result<Window, Error> {
-    let ask = count.saturating_add(1).min(i32::MAX.unsigned_abs());
-    let mut lines = capture(ctx, id, &format!("+{ask}"))?;
     let shown = usize::try_from(count).unwrap_or(usize::MAX);
+    let mut ask = count.saturating_add(1).min(MOST_ENTRIES);
+    let mut lines = loop {
+        let entries = capture(ctx, id, &format!("+{ask}"))?;
+        let whole = entries.len() < asked(ask);
+        let mut joiner = Joiner::default();
+        let mut lines: Vec<String> = entries
+            .into_iter()
+            .flat_map(|entry| joiner.push(entry))
+            .collect();
+        let ended = lines.len();
+        lines.extend(joiner.finish());
+        if whole || ended > shown || ask == MOST_ENTRIES {
+            break lines;
+        }
+        ask = ask.saturating_mul(2).min(MOST_ENTRIES);
+    };
     let newer = lines.len() > shown;
-    lines.truncate(shown);
+    // Before the cut, so an empty window (`--head 0`) still says whether
+    // it begins at the run's first line.
     let from_start = lines
         .first()
         .is_some_and(|line| line.starts_with(RUN_STARTED));
+    lines.truncate(shown);
     Ok(Window {
         lines,
         from_start,
@@ -114,12 +167,25 @@ fn oldest(ctx: &Context, id: &str, count: u32) -> Result<Window, Error> {
     })
 }
 
-/// `journalctl --user _SYSTEMD_INVOCATION_ID=ID -q -o cat -n LINES`: the
-/// newest LINES lines, or with `+N` the oldest N.
-fn capture(ctx: &Context, id: &str, lines: &str) -> Result<Vec<String>, Error> {
+/// An ask as a count of entries.
+fn asked(ask: u32) -> usize {
+    usize::try_from(ask).unwrap_or(usize::MAX)
+}
+
+/// `journalctl --user _SYSTEMD_INVOCATION_ID=ID -q -o json ... -n ENTRIES`:
+/// the newest ENTRIES entries, or with `+N` the oldest N, oldest first.
+fn capture(ctx: &Context, id: &str, entries: &str) -> Result<Vec<Entry>, Error> {
     let filter = format!("_SYSTEMD_INVOCATION_ID={id}");
-    let captured =
-        ctx.journalctl
-            .run(["--user", filter.as_str(), "-q", "-o", "cat", "-n", lines])?;
-    Ok(captured.stdout_text().lines().map(str::to_owned).collect())
+    let captured = ctx.journalctl.run(
+        ["--user", filter.as_str(), "-q"]
+            .into_iter()
+            .chain(journal::OUTPUT)
+            .chain(["-n", entries]),
+    )?;
+    Ok(captured
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(Entry::parse)
+        .collect())
 }

@@ -37,8 +37,8 @@ transport.
   they need the client or the terminal that starts them.
 - Vary one run with `--patch FILE` after the profile word, as in
   `dshd run --bg --name task-7 -- worker --patch ./fast.yml "summarise the open issues"`;
-  the overlay is part of the recipe, every start applies it, and `get` and
-  `ls` show it in `patches`.
+  the overlay is part of the recipe, every start applies it, `get` shows it
+  in `profile.patches` and `ls` in `profilePatches`.
 - To make the overlay's content part of the instance, give it to dshd
   before `--`: `dshd run --bg --patch ./fast.yml --name task-7 -- worker "summarise the open issues"`.
   dshd snapshots the file (a regular file of at most 1 MiB) at creation
@@ -46,6 +46,13 @@ transport.
   the overlays typed in the argv. Editing or deleting the file changes
   nothing; the same name with other content is `exists-different-recipe`.
   `get` lists the snapshots in `patches` with their `sha256`.
+- A headless task longer than one argument (Linux caps one at 128 KiB)
+  goes in as stdin: give DSH's task `-` and the input to dshd before `--`,
+  as in `dshd run --bg --stdin ./brief.md --name task-8 -- worker -`, or
+  `--stdin -` to pass dshd's own stdin. dshd snapshots it (at most 1 MiB)
+  at creation and every start, `start --rerun` included, gives `dsh` the
+  copy as its stdin; other input under the same name is
+  `exists-different-recipe`. Web and acp profiles refuse `--stdin`.
 - One app per profile: DSH mounts every bundle a profile lists, so a
   profile with two apps gets a warning and the transport of the first. A
   web instance and headless tasks of one configuration need two profiles.
@@ -88,6 +95,9 @@ run, stderr says `[dshd] incomplete: older output may be missing`; widen
 with `-n`. What a long run printed first, such as an id it announced at
 its start, is in `--head N`, its first N lines, which stay the same however
 long the run goes on; `complete` is then false when newer lines follow.
+A line longer than journald's `LineMax` (48K by default), which journald
+stores in pieces, is joined again: each line dsh wrote is one element of
+`lines`.
 For an acp instance the journal holds dsh's stderr only, since
 its stdout is the ACP channel. `read --json` gives
 `{"name","invocationId","complete","streams","lines"}`.
@@ -135,8 +145,10 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   `nohup` or `&` included. Nothing a session started survives its stop.
 - A name outlives its runs, and `stop NAME` stops whatever runs under it
   now. To stop only the run you started, keep its `invocationId` from
-  `run --json` and use `dshd stop --invocation ID NAME`: another
+  `run --json`, or `lastRun.invocationId` when that is null (a headless
+  task that ended already), and use `dshd stop --invocation ID NAME`: another
   invocation is refused with `not-running`, and nothing is stopped.
+  `dshd rm --invocation ID NAME` removes the instance only after that run.
 - `run` never runs a headless task twice. Once it ran, `start` refuses with
   `task-already-ran`; `dshd start --rerun batch` submits the recorded prompt
   again, on purpose. `restart` refuses a headless instance for the same
@@ -168,7 +180,8 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   `lastRun.invocationId`, and read the run's totals from
   `lastRun.resources`.
   `remedy` is the command to run next, or null.
-- `ls`: `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy","labels"}],"linger","warnings"}`.
+- `ls`: `{"instances":[{"name","state","transport","profile","profilePatches","release","releaseState","enabled","since","remedy","labels"}],"linger","warnings"}`.
+  `profilePatches` is `get`'s `profile.patches`, not its snapshot `patches`.
 - Mutating verbs: the status object plus `outcome` and `warnings`.
   `outcome` is one of created, started, already-running, stopped,
   already-stopped, restarted, updated, unchanged, enabled, already-enabled,

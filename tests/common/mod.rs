@@ -228,6 +228,7 @@ impl Instance {
             cwd: OsText::new(self.path(WORK)),
             args: typed.into_iter().map(OsText::from).collect(),
             patches: Vec::new(),
+            stdin: None,
             environment: launch::capture_environment(&variables, &release_file.unset_environment),
             profile: ProfileRef {
                 name: selected,

@@ -1,7 +1,7 @@
 //! Following one run: `journalctl --user _SYSTEMD_INVOCATION_ID=ID -f`
-//! read on a thread, printed or not, until the runner's last line or a
-//! deadline; then one look at the unit decides whether the run ended,
-//! and `last-run.json` says how. `run`, `wait` and `read --follow` share it.
+//! read on a thread, its entries joined into dsh's lines, printed or not,
+//! until the runner's last line or a deadline; then one look at the unit
+//! decides whether the run ended, and `last-run.json` says how. `run`, `wait` and `read --follow` share it.
 
 use std::io::{BufRead, BufReader};
 use std::process::Stdio;
@@ -9,6 +9,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::journal::{self, Entry, Joiner};
 use super::lifecycle;
 use super::status;
 use crate::cli::Context;
@@ -157,7 +158,7 @@ pub(super) fn journal(
         Since::Now => command.args(["-n", "0"]),
     };
     command
-        .args(["-o", "cat"])
+        .args(journal::OUTPUT)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
     let mut child = command
@@ -196,22 +197,29 @@ fn recorded_end(ctx: &Context, instance: &Instance, id: &str) -> Result<Option<J
     }
 }
 
-/// Reads `stdout` line by line on a thread. Bytes that are not UTF-8 are
-/// replaced, as the journal shows them.
+/// Reads journalctl's entries from `stdout` on a thread and sends the lines
+/// they make, a line journald broke at `LineMax` joined again; a broken
+/// line the output ends inside is sent as far as it goes. Bytes that are
+/// not UTF-8 are replaced, as the journal shows them.
 fn read_lines(stdout: impl std::io::Read + Send + 'static) -> Result<Receiver<String>, Error> {
     let (sender, receiver) = mpsc::channel();
     let spawned = thread::Builder::new()
         .name("journal".to_owned())
         .spawn(move || {
-            for line in BufReader::new(stdout).split(b'\n') {
-                let Ok(line) = line else {
+            let mut joiner = Joiner::default();
+            for entry in BufReader::new(stdout).split(b'\n') {
+                let Ok(entry) = entry else {
                     break;
                 };
-                if sender
-                    .send(String::from_utf8_lossy(&line).into_owned())
-                    .is_err()
-                {
-                    break;
+                for line in joiner.push(Entry::parse(&entry)) {
+                    if sender.send(line).is_err() {
+                        return;
+                    }
+                }
+            }
+            for line in joiner.finish() {
+                if sender.send(line).is_err() {
+                    return;
                 }
             }
         });

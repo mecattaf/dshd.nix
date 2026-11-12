@@ -42,14 +42,18 @@ system configuration supplies `dsh`, and dshd runs the release it is given.
   another can attach and receive what it missed.
 - A headless task runs once. dshd never submits its prompt again unless you
   ask for it with `dshd start --rerun NAME`.
+- `run --stdin FILE` snapshots a headless task's input: every start gives
+  `dsh` that copy as its stdin, so a task larger than one argument goes in
+  as `-`; without it a headless `dsh` reads `/dev/null`.
 - Output is JSON when stdout is not a terminal, so scripts and agents read
   the same objects people see as text. `dshd --skill` prints a guide for
   agents.
 
 ```
 %S/dshd/NAME/
-  instance.json   the recipe (0600): id, release name, cwd, args, patches, environment, profile, transport, labels
+  instance.json   the recipe (0600): id, release name, cwd, args, patches, stdin, environment, profile, transport, labels
   patches/        the run --patch snapshots (0700), NN-SHA256PREFIX.yml (0600), only when given
+  stdin           the run --stdin snapshot (0600), only when given
   last-run.json   how the current or last run started and, once it ended, how it ended
   current         -> /nix/store/...-dshd-release-...   the release the next start uses (GC root)
   booted          -> /nix/store/...-dshd-release-...   the running release; current again after a stop (GC root)
@@ -225,12 +229,12 @@ reference for each verb.
 
 | Verb | Flags | Outcomes | What it does |
 |---|---|---|---|
-| `run -- ARGS` | `--bg`, `--name N`, `--release R`, `--cwd D`, `--label K=V`..., `--timeout S` | `created`, `started`, `already-running`, `ended`, `still-running` | Creates the instance, or matches the stored recipe of `--name`, and starts it. Web and ACP instances, and any instance with `--bg`, are left running. A headless instance runs in the foreground until `dsh` exits or `--timeout` passes. A different recipe under an existing name is refused. |
+| `run -- ARGS` | `--bg`, `--name N`, `--release R`, `--cwd D`, `--label K=V`..., `--patch F`..., `--stdin F`, `--timeout S` | `created`, `started`, `already-running`, `ended`, `still-running` | Creates the instance, or matches the stored recipe of `--name`, and starts it. Each `--patch` file is snapshotted into the instance at creation and handed to `dsh` at every start, and so is `--stdin`, as a headless `dsh`'s stdin. Web and ACP instances, and any instance with `--bg`, are left running. A headless instance runs in the foreground until `dsh` exits or `--timeout` passes. A different recipe under an existing name is refused. The labels of an existing instance are set only once it starts or runs already, so a refused run leaves them as they were. |
 | `start NAME` | `--rerun` | `started`, `already-running` | Starts the instance again from its recorded recipe and its `current` release. Never creates one. A headless instance whose task ran is refused unless `--rerun` is given. |
 | `stop NAME` | `--invocation ID` | `stopped`, `already-stopped` | Stops the unit and every process it started. The recipe, the release roots and DSH's sessions stay. With `--invocation ID`, only the run of that invocation: any other is refused with `not-running`. |
 | `restart NAME` | | `restarted` | Clears a failed state, restarts on the `current` release and waits until the instance runs. Refused for headless instances. |
 | `update NAME` | `-R` | `updated`, `unchanged` | Points `current` at what the recorded release name resolves to now and prints `nix store diff-closures` between the two releases; `-R` also restarts a running web or ACP instance. Refused for an instance created from a store path. |
-| `ls` | | | Every instance: `NAME: state(release)`, with the command to run when one is needed. |
+| `ls` | | | Every instance: `NAME: state(release)`, with the command to run when one is needed. As JSON, each entry also carries its profile, patches and labels. |
 | `get NAME` | | | Everything dshd knows about one instance: the unit, the recipe, the release links, the profile and its DSH home, the web address or the ACP relay's report, how the last run ended, and whether linger is on. |
 | `read NAME` | `-n LINES`, `--head LINES`, `-f` | | The journal of the current run, or of the last one, as DSH wrote it: its newest 200 lines by default, or with `--head` its first ones. `-f` follows until the run ends. |
 | `wait NAME` | `--timeout S` | `ended`, `still-running` | Waits until the current run ends, then exits as `dsh` did. A run that ended already is reported at once. |
@@ -238,7 +242,7 @@ reference for each verb.
 | `label NAME K=V...` | | `labelled` | Sets labels; an empty value removes the key. `dsh` never sees labels, and the instance keeps running. |
 | `enable NAME` | | `enabled`, `already-enabled` | Adds the unit to `dshd.target`, which the user manager starts at its first login, or at boot with linger. Starts nothing. Refused for headless instances. |
 | `disable NAME` | | `disabled`, `already-disabled` | Removes the unit from `dshd.target`. Stops nothing. |
-| `rm NAME` | | `removed` | Refused while running. Removes the instance directory and its release roots. The profile and DSH's sessions are untouched. |
+| `rm NAME` | `--invocation ID` | `removed` | Refused while running. Removes the instance directory and its release roots. The profile and DSH's sessions are untouched. With `--invocation ID`, only when the last run was that invocation: any other is refused with `not-running`. |
 | `help [VERB]` | | | The general page, or the page of one verb. |
 | `--skill` | | | Prints the guide for agents: which verb for which need, the JSON shapes and the traps. |
 | `--version` | | | Prints `dshd 0.1.0`. |
@@ -258,10 +262,12 @@ recreated name is a different instance to anything that keeps references.
 Profiles are DSH's own, and dshd neither copies nor changes them.
 `dshd run -- web` runs the same `dsh web` you would type, with every token
 as typed, and DSH composes the profile at every start from what is in
-`$DSH_HOME/profiles/<p>` then: the bundles in `package.json`, then
-`cordis.patch.yml`, then any `--patch`. dshd writes nothing in the DSH
-home. What an instance keeps across starts is its release, the `dsh`
-build and the runner, until `dshd update`.
+`$DSH_HOME` then: the bundles in `profiles/<p>/package.json`, then
+`profiles/<p>/cordis.patch.yml`, then the home layer
+`$DSH_HOME/cordis.patch.yml`, which applies to every profile of the home,
+then any `--patch`. dshd writes nothing in the DSH home. What an instance
+keeps across starts is its release, the `dsh` build and the runner, until
+`dshd update`.
 
 dshd reads one thing from the profile: the bundles in its `package.json`,
 which give the instance its transport at creation. The transport is
@@ -302,8 +308,9 @@ launcher flags before the app's arguments: the profile word or
 `dshd run --bg --name task-7 -- worker --patch ./fast.yml "summarise the open issues"`.
 They are part of the argv, so the recipe records them: every start,
 `start --rerun` included, boots the same profile with the same overlays,
-read live at that start, and `get` and `ls` show them as `profile` and
-`patches`. The same name with another profile or another overlay is a
+read live at that start. `get` shows them as `profile.name` and
+`profile.patches`, and each `ls` entry as `profile` and `profilePatches`.
+The same name with another profile or another overlay is a
 different recipe, refused with `exists-different-recipe`. DSH resolves a
 relative `--patch` against the instance's working directory, and reads the
 file again at every start. dshd has no `--transport` flag.
@@ -328,6 +335,27 @@ the instance. An instance made without `--patch` keeps the record it
 always had; one made with it carries the `patches` key, which an older
 dshd does not know and refuses to act on, so after a rollback such an
 instance is recreated with `dshd rm NAME` and `run`.
+
+**Headless input.** A headless task reaches `dsh` through its argv, which
+Linux caps at 128 KiB per argument. For a larger task, or one kept out of
+the argv, give DSH's task `-` ("read the task from stdin") and the input
+with `dshd run --stdin FILE` (before `--`), as in
+`dshd run --bg --stdin ./brief.md --name task-8 -- worker -`; with
+`--stdin -` dshd reads its own stdin to the end, as in
+`git diff | dshd run --bg --stdin - --name review-3 -- worker -`. At
+creation dshd copies the input, a readable regular file or stdin of at
+most 1 MiB (a relative FILE is yours), to `%S/dshd/NAME/stdin` and records
+its sha256 in the recipe as `stdin`; anything else is `invalid-argument`,
+naming FILE. Every start, `restart`, `update` and `start --rerun` included,
+gives a headless `dsh` that copy as its stdin, and FILE is never read
+again. The same name with other input, or none, is
+`exists-different-recipe`; the same content from another path is the same
+recipe. A start refuses a copy that no longer holds the recorded content.
+A web or acp instance has no task to read, so `--stdin` for a profile that
+selects either is `invalid-argument`. Without `--stdin` a headless `dsh`
+reads `/dev/null`, as before, and the record is written as it always was;
+one made with it carries the `stdin` key, which an older dshd refuses to
+act on.
 
 ### One configuration, several apps
 
@@ -447,6 +475,16 @@ makes on its own after `RestartSec`, or a start from outside dshd
 (`systemctl --user start`, `dshd.target`), takes no lock. After `stopped`,
 `lastRun.invocationId` names the run that ended.
 
+**Removing after one run.** A supervisor that removes the instance once
+its run ended uses `dshd rm --invocation ID NAME`, with the same ID: the
+instance is removed only when its last run was ID. A unit on another
+invocation, running or last, and an instance that never ran are refused
+with `not-running` (exit 5); a unit that still runs ID keeps `rm`'s
+`instance-running` (exit 4). Nothing is removed on a refusal. The
+comparison and the removal hold the root and instance locks, so a `start`
+or `run` of the name between the supervisor's `get` and its `rm` is
+either done first and refused, or waits and finds no instance.
+
 **Restart policy.** The template says `Restart=no` and
 `RestartForceExitStatus=75`. The runner exits 75 only when a web or ACP
 `dsh` that became ready dies without a stop request, so that is the only
@@ -511,8 +549,13 @@ away, however much it printed since. `"complete": true` in `read --json`
 means the lines are the whole run so far. When they are not, because they
 do not reach back to the run's start (`-n`, or journald rotated them away)
 or newer lines follow them (`--head`), stderr says which and `complete` is
-false. An ACP instance's journal holds DSH's stderr only,
-since its stdout is the ACP channel, and `read` says so on stderr.
+false. journald stores a line longer than its `LineMax` (48K by default)
+as several entries and marks them `_LINE_BREAK=line-max`; `read`, `run`
+and `wait` join them, so each line DSH wrote, such as one `--json` event,
+is one line of the output and one element of `lines`, and `-n` and
+`--head` count those lines; `journalctl -u` shows the pieces. An ACP
+instance's journal holds DSH's stderr only, since its stdout is the ACP
+channel, and `read` says so on stderr.
 `systemctl --user status dshd@NAME.service` shows the unit, and the last
 line of `/proc/<pid>/cgroup` of any process names the instance that owns
 it.
@@ -627,8 +670,8 @@ line, or `{"error":{"kind":KIND,"message":TEXT,"hint":COMMAND|null}}`.
   `run` and `wait`, once they followed a run, add `exitCode`, `signal` and
   `reason`.
 - `ls` prints one object:
-  `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy","labels"}],"linger":BOOL,"warnings":[...]}`,
-  so a supervisor can match its instances by label with one call.
+  `{"instances":[{"name","state","transport","profile","profilePatches","release","releaseState","enabled","since","remedy","labels"}],"linger":BOOL,"warnings":[...]}`,
+  where `profilePatches` is `get`'s `profile.patches`, so a supervisor can match its instances by label with one call.
 - `read --json` prints `{"name","invocationId","complete","streams","lines"}`;
   `attach --json` on a web instance prints `{"origin","port","urlFile"}`,
   and `url` with `--print-url`.

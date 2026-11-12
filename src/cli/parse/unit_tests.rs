@@ -99,7 +99,13 @@ fn lifecycle_arguments_parse() {
     assert_eq!(verb(&["get", "a"]), Verb::Get(one("a")));
     assert_eq!(verb(&["enable", "a"]), Verb::Enable(one("a")));
     assert_eq!(verb(&["disable", "a"]), Verb::Disable(one("a")));
-    assert_eq!(verb(&["rm", "a"]), Verb::Rm(one("a")));
+    assert_eq!(
+        verb(&["rm", "a"]),
+        Verb::Rm(RmArgs {
+            name: name("a"),
+            invocation: None
+        })
+    );
     assert_eq!(
         verb(&["update", "-R", "a"]),
         Verb::Update(UpdateArgs {
@@ -270,7 +276,7 @@ fn dsh_argv_is_verbatim() {
 }
 
 // catches: an invocation id not kept as the 32 lowercase hex digits get prints, one that is not
-// an id accepted, or --invocation taken by a verb other than stop
+// an id accepted, or --invocation taken by a verb other than stop and rm
 #[test]
 fn stop_invocation_parses() {
     let id = "0123456789abcdef0123456789abcdef";
@@ -306,7 +312,7 @@ fn stop_invocation_parses() {
         2,
         "the NAME is taken as the id"
     );
-    for other in ["restart", "start", "rm", "get"] {
+    for other in ["restart", "start", "get", "update"] {
         assert_eq!(
             parse(os(&[other, "--invocation", id, "a"]))
                 .unwrap_err()
@@ -314,6 +320,23 @@ fn stop_invocation_parses() {
             format!("{other} does not take --invocation")
         );
     }
+}
+
+// catches: rm dropping --invocation, so a compare-and-remove removes an instance whatever run it
+// last held, or rm taking an id stop would refuse
+#[test]
+fn rm_invocation_parses() {
+    let id = "0123456789abcdef0123456789abcdef";
+    let upper = format!("--invocation={}", id.to_ascii_uppercase());
+    assert_eq!(
+        verb(&["rm", &upper, "--json", "a"]),
+        Verb::Rm(RmArgs {
+            name: name("a"),
+            invocation: Some(id.into()),
+        })
+    );
+    assert_eq!(kind(&["rm", "--invocation", "a1", "a"]), "invalid-argument");
+    assert_eq!(exit(&["rm", "--invocation", id]), 2, "the id is not a NAME");
 }
 
 // catches: a bad flag, a flag on the wrong verb or a stray word accepted instead of exit 2

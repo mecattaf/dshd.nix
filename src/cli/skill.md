@@ -137,6 +137,7 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   now. To stop only the run you started, keep its `invocationId` from
   `run --json` and use `dshd stop --invocation ID NAME`: another
   invocation is refused with `not-running`, and nothing is stopped.
+  `dshd rm --invocation ID NAME` removes the instance only after that run.
 - `run` never runs a headless task twice. Once it ran, `start` refuses with
   `task-already-ran`; `dshd start --rerun batch` submits the recorded prompt
   again, on purpose. `restart` refuses a headless instance for the same

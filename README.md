@@ -447,6 +447,16 @@ makes on its own after `RestartSec`, or a start from outside dshd
 (`systemctl --user start`, `dshd.target`), takes no lock. After `stopped`,
 `lastRun.invocationId` names the run that ended.
 
+**Removing after one run.** A supervisor that removes the instance once
+its run ended uses `dshd rm --invocation ID NAME`, with the same ID: the
+instance is removed only when its last run was ID. A unit on another
+invocation, running or last, and an instance that never ran are refused
+with `not-running` (exit 5); a unit that still runs ID keeps `rm`'s
+`instance-running` (exit 4). Nothing is removed on a refusal. The
+comparison and the removal hold the root and instance locks, so a `start`
+or `run` of the name between the supervisor's `get` and its `rm` is
+either done first and refused, or waits and finds no instance.
+
 **Restart policy.** The template says `Restart=no` and
 `RestartForceExitStatus=75`. The runner exits 75 only when a web or ACP
 `dsh` that became ready dies without a stop request, so that is the only

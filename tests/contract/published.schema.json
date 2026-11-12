@@ -889,6 +889,16 @@
             }
           ]
         },
+        "resources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/resources"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "thisBoot": {
           "type": "boolean"
         }
@@ -902,6 +912,7 @@
         "exitCode",
         "exitStatus",
         "child",
+        "resources",
         "thisBoot"
       ],
       "additionalProperties": false
@@ -1051,6 +1062,9 @@
             "integer",
             "null"
           ]
+        },
+        "resources": {
+          "$ref": "#/$defs/runResources"
         }
       },
       "required": [
@@ -1060,6 +1074,41 @@
         "exitStatus",
         "stopIntent"
       ],
+      "additionalProperties": false
+    },
+    "runResources": {
+      "type": "object",
+      "properties": {
+        "cpuUsageNSec": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "memoryPeak": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ioReadBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ioWriteBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [],
       "additionalProperties": false
     },
     "osText": {

@@ -140,6 +140,10 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   inconsistent. `lastRun.ending` is one of stopped, stopped-without-intent,
   exited, failed, interrupted, or null while the run is in progress.
   `resources` contains live systemd counters, or null values when unavailable.
+  Once the manager unloads an ended unit (a finished headless task), the
+  top-level `invocationId` and `resources` are null: key on
+  `lastRun.invocationId`, and read the run's totals from
+  `lastRun.resources`.
   `remedy` is the command to run next, or null.
 - `ls`: `{"instances":[{"name","state","transport","release","releaseState","enabled","since","remedy","labels"}],"linger","warnings"}`.
 - Mutating verbs: the status object plus `outcome` and `warnings`.

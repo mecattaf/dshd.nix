@@ -242,6 +242,31 @@ pub struct RunEnd {
     /// The stop signal the runner received; null when none arrived.
     #[serde(default)]
     pub stop_signal: Option<i32>,
+    /// What the run consumed; absent in a record an older `poststop` wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<RunResources>,
+    /// Keys this version does not know.
+    #[serde(flatten)]
+    pub unrecognized: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The run's totals, read by `poststop` from the unit's own cgroup once
+/// every process of the run is gone; null where the controller is off.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunResources {
+    /// CPU time in nanoseconds (`cpu.stat` `usage_usec`).
+    #[serde(default, rename = "cpuUsageNSec")]
+    pub cpu_usage_nsec: Option<u64>,
+    /// Peak memory use in bytes (`memory.peak`).
+    #[serde(default)]
+    pub memory_peak: Option<u64>,
+    /// Bytes read, over every device (`io.stat` `rbytes`).
+    #[serde(default)]
+    pub io_read_bytes: Option<u64>,
+    /// Bytes written, over every device (`io.stat` `wbytes`).
+    #[serde(default)]
+    pub io_write_bytes: Option<u64>,
     /// Keys this version does not know.
     #[serde(flatten)]
     pub unrecognized: serde_json::Map<String, serde_json::Value>,
@@ -356,6 +381,32 @@ mod tests {
                 .end
                 .is_none()
         );
+    }
+
+    // catches: an end written by an older poststop read as having consumed nothing, the run's totals lost on a
+    // round trip, or a record without totals serialized differently from before
+    #[test]
+    fn run_end_resources_are_optional() {
+        let old: LastRun =
+            serde_json::from_str(include_str!("../tests/fixtures/last-run.json")).unwrap();
+        let mut end = old.end.clone().unwrap();
+        assert_eq!(end.resources, None);
+        assert!(end.unrecognized.is_empty());
+        let text = String::from_utf8(to_json(&old).unwrap()).unwrap();
+        assert!(!text.contains("resources"), "{text}");
+        end.resources = Some(RunResources {
+            cpu_usage_nsec: Some(2_500_000_000),
+            memory_peak: Some(73_400_320),
+            io_read_bytes: None,
+            io_write_bytes: Some(0),
+            unrecognized: serde_json::Map::new(),
+        });
+        let text = serde_json::to_string(&end).unwrap();
+        assert!(
+            text.contains(r#""resources":{"cpuUsageNSec":2500000000,"memoryPeak":73400320,"ioReadBytes":null,"ioWriteBytes":0}"#),
+            "{text}"
+        );
+        assert_eq!(serde_json::from_str::<RunEnd>(&text).unwrap(), end);
     }
 
     // catches: a mirrored exit that differs from what a shell reports: a code changed, 128+S wrapping instead of

@@ -283,7 +283,8 @@ pkgs.testers.runNixOSTest {
         assert "dshd@p24.service" not in run("systemctl --user show --property=Wants --value dshd.target")
 
     # catches: a stop intent never written or never read, a systemctl stop
-    # recorded as dshd's, or a task's own end recorded as a stop
+    # recorded as dshd's, a task's own end recorded as a stop, or an ended
+    # task whose totals and end time vanish once the manager unloads its unit
     with subtest("P2.5 stop reasons"):
         run_bg("--name why -- web", "web")
         dshd("stop why")
@@ -292,7 +293,14 @@ pkgs.testers.runNixOSTest {
         run("systemctl --user stop dshd@why.service")
         assert get("why")["lastRun"]["ending"] == "stopped-without-intent"
         run("env DSH_STUB_MODE=headless dshd run --name done -- headless 'finish the task'")
-        assert get("done")["lastRun"]["ending"] == "exited"
+        done = get("done")
+        assert done["lastRun"]["ending"] == "exited"
+        assert done["since"] is not None, done
+        consumed = done["lastRun"]["resources"]
+        for key in ("cpuUsageNSec", "memoryPeak", "ioReadBytes", "ioWriteBytes"):
+            assert isinstance(consumed[key], int) and consumed[key] >= 0, consumed
+        assert consumed["cpuUsageNSec"] > 0 and consumed["memoryPeak"] > 0, consumed
+        assert consumed["memoryCurrent"] is None and consumed["tasksCurrent"] is None, consumed
         receipt("why", "P2.5")
 
     # catches: DSH_HOME of the starting shell not reaching dsh or get, or a

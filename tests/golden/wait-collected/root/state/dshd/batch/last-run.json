@@ -1,0 +1,24 @@
+{
+  "id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+  "releasePath": "%RELEASE%",
+  "bootId": "7f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+  "startedAt": 1794009610,
+  "invocationId": "fedcba9876543210fedcba9876543210",
+  "end": {
+    "endedAt": 1794013210,
+    "serviceResult": "success",
+    "exitCode": "exited",
+    "exitStatus": "0",
+    "child": {
+      "exitCode": 0
+    },
+    "stopIntent": false,
+    "stopSignal": null,
+    "resources": {
+      "cpuUsageNSec": 2500000000,
+      "memoryPeak": 73400320,
+      "ioReadBytes": 4096,
+      "ioWriteBytes": 1024
+    }
+  }
+}

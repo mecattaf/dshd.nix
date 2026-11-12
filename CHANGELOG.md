@@ -27,6 +27,10 @@
   available directly from journald lifecycle records.
 - Labels on instances, set by `run --label` and `label`; each `ls` entry
   shows them.
+- An ended run keeps its totals: `poststop` records the CPU time, peak
+  memory and IO bytes of the unit's cgroup in `last-run.json`, and the
+  status object shows them as `lastRun.resources`. Once the manager
+  unloads an ended unit, `since` falls back to `lastRun.endedAt`.
 - `run` refuses a `--patch` launcher flag with an empty value, which every
   start of the instance would fail on.
 - `dshd-run`, the per-release runner: spawns `dsh` with the recorded argv,

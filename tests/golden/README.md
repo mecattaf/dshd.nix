@@ -130,7 +130,11 @@ itself with status N); a unit without a file has never run.
   fake writes the instance's `last-run.json` as the runner's post-stop step
   would: invocation `0123456789abcdef0123456789abcdef`, the end
   `exited`/`N` with the child's exit code N, `serviceResult` `success` for
-  0 and `exit-code` otherwise, no stop intent.
+  0 and `exit-code` otherwise, no stop intent, and the run's totals
+  `cpuUsageNSec` 2500000000 and `memoryPeak` 73400320 with no IO counts.
+  With `FAKE_COLLECT=1` and `FAKE_EXIT=0` the unit's state file is then
+  removed, as the manager unloads an ended unit nothing references, so
+  later queries show it as never run.
 - `stop UNIT`: the state becomes `dead`. With `FAKE_FAIL=stop` the state
   stays, and the fake prints `Failed to stop UNIT: Access denied` on stderr
   and exits 1.

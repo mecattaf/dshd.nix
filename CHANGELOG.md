@@ -20,6 +20,13 @@
 - A headless task runs once: a foreground `run` prints its output and
   exits as `dsh` did, `wait` and `read` pick it up later, and only
   `start --rerun` submits the prompt again.
+- `read --head N` prints the oldest N lines of the current or last run
+  instead of the newest, in one journal query, so a supervisor finds what
+  a run printed at its start without reading the whole run. `complete`
+  now means the lines are the whole run so far, which for `-n` is what it
+  meant before; with `--head` it is false while newer lines follow, and
+  stderr says so. `--head` excludes `-n` and `--follow`
+  (`invalid-argument`). No record and no output shape changes.
 - Each run records how it ended (`stopped`, `stopped-without-intent`,
   `exited`, `failed`, `interrupted`), from the stop intent dshd writes
   before it stops an instance; a unit the user masked shows as `masked`.

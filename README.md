@@ -674,13 +674,14 @@ one with a field it does not know rather than guess.
 | `clippy`, `rustfmt`, `nixfmt`, `deadnix` | lints and formatting, warnings as errors |
 | `module` | the exact rendered template, the release registry and the name grammar |
 | `hygiene` | spelling, no private paths, no unfinished markers, the licence and the attribution of adapted files |
-| `lifecycle`, `transport`, `switch`, `reboot` | NixOS VM tests of the whole lifecycle with the stub dsh |
+| `lifecycle`, `transport`, `run-patch`, `switch`, `reboot` | NixOS VM tests of the whole lifecycle with the stub dsh; `run-patch` covers the `run --patch` snapshots |
 
 `tests/stub/dsh.sh` is the one fake DSH: `DSH_STUB_MODE` selects web, ACP,
 headless or a failure mode, `DSH_STUB_PORT` the web port, `DSH_STUB_DELAY`
 a slow headless task, `DSH_STUB_BACKGROUND` a tool process that ignores
 SIGTERM, `DSH_STUB_RUN_AFTER_READY` a command run from inside the instance,
-and `DSH_STUB_LOG` where it records each invocation. Each VM check writes
+and `DSH_STUB_LOG` where it records each invocation; it prints the sha256
+of each `--patch` it receives on stderr. Each VM check writes
 one receipt line per proof to its output and fails unless every proof it
 names passed. `nix fmt` formats the Nix files. `cargo fmt`, `cargo clippy`
 and `cargo test` work with any Rust toolchain of version 1.89 or newer;

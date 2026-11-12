@@ -442,8 +442,11 @@ unless it says so:
 release, so a retained instance never waits for an approval nobody sees.
 Your own value, a profile patch and a home patch still win; set another
 mode in the release's `environment`, for example `"workspace-write"`, to
-change the default. dshd changes nothing about DSH telemetry; set
-`DSH_TELEMETRY_DISABLED = "1"` in a release's `environment` to turn it off.
+change the default. A web instance where people open sessions is
+attended, not retained: pin the permission rows in its profile or a
+patch rather than rely on this default. dshd changes nothing about DSH
+telemetry; set `DSH_TELEMETRY_DISABLED = "1"` in a release's
+`environment` to turn it off.
 
 ## Operating guide
 

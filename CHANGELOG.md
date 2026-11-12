@@ -27,6 +27,12 @@
   meant before; with `--head` it is false while newer lines follow, and
   stderr says so. `--head` excludes `-n` and `--follow`
   (`invalid-argument`). No record and no output shape changes.
+- `read`, `run` and `wait` join a line journald broke at its `LineMax`
+  (48K by default, marked `_LINE_BREAK=line-max`), so a line DSH wrote,
+  such as a long `--json` event, is one line of the output and one
+  element of `read --json`'s `lines`, and `-n` and `--head` count those
+  lines. They read the journal as `-o json` for that mark. No record and
+  no output shape changes.
 - Each run records how it ended (`stopped`, `stopped-without-intent`,
   `exited`, `failed`, `interrupted`), from the stop intent dshd writes
   before it stops an instance; a unit the user masked shows as `masked`.

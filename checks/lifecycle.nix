@@ -8,8 +8,9 @@
 # writes outside the instance or in the DSH home, an ending that misnames
 # who stopped it, a secret outside its 0600 record, nix needed at start,
 # Ctrl+C of a foreground run reaching the instance, output lost before the
-# exit, a self-restart that loses the instance, a stop by invocation id
-# that reaches a newer run of the name, and linger hidden or changed.
+# exit, a self-restart that loses the instance, a stop or removal by
+# invocation id that reaches a newer run of the name, and linger hidden or
+# changed.
 { self, pkgs }:
 let
   vm = import ./vm-node.nix { inherit self pkgs; };
@@ -347,7 +348,18 @@ pkgs.testers.runNixOSTest {
         assert third not in (first, second), third
         refused(second, third)
         receipt("fence", "stop-invocation")
+        # A removal by invocation id keeps the instance while its run goes
+        # on, and after a newer run; it removes the one whose last run it
+        # names.
+        code, err = attempt(f"dshd rm --json --invocation {third} fence")
+        assert code == 4 and json.loads(err)["error"]["kind"] == "instance-running", err
         assert dshd(f"stop --invocation {third} fence")["outcome"] == "stopped"
+        code, err = attempt(f"dshd rm --json --invocation {second} fence")
+        assert code == 5 and "its last run was " + third in err, err
+        assert get("fence")["lastRun"]["invocationId"] == third
+        assert dshd(f"rm --invocation {third} fence")["outcome"] == "removed"
+        code, err = attempt("dshd get --json fence")
+        assert code == 3 and json.loads(err)["error"]["kind"] == "not-found", err
 
     # catches: DSH_HOME of the starting shell not reaching dsh or get, or a
     # profile that does not exist yet made by dshd rather than by dsh: in a

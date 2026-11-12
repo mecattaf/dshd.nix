@@ -60,19 +60,17 @@ fn readme_states_the_composition_order() -> TestResult {
     let text = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))?;
     let prose = text.replace('`', "");
     let prose = prose.split_whitespace().collect::<Vec<_>>().join(" ");
-    let start = prose
-        .find("DSH composes the profile at every start")
+    let (_, after) = prose
+        .split_once("DSH composes the profile at every start")
         .ok_or("README.md: no sentence states the order DSH composes a profile in")?;
-    let sentence = prose[start..].split(". ").next().unwrap_or_default();
+    let sentence = after.split(". ").next().unwrap_or_default();
     let mut rest = sentence;
     for layer in COMPOSITION {
-        let Some(at) = rest.find(layer) else {
-            return Err(format!(
-                "README.md: the composition order does not name {layer} after the layers before it: {sentence}"
+        (_, rest) = rest.split_once(layer).ok_or_else(|| {
+            format!(
+                "README.md: the composition order does not name {layer} after the layers before it:{sentence}"
             )
-            .into());
-        };
-        rest = &rest[at + layer.len()..];
+        })?;
     }
     Ok(())
 }

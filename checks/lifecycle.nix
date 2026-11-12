@@ -411,6 +411,22 @@ pkgs.testers.runNixOSTest {
         assert get("quick")["lastRun"]["ending"] == "exited"
         receipt("quick", "run-output")
 
+    # catches: --head showing the newest lines, a head that loses the run's
+    # first line, or complete claimed for a head that newer lines follow, on
+    # the real journal of an ended headless run
+    with subtest("read --head"):
+        whole = json.loads(run("dshd read --json quick"))
+        assert whole["complete"] is True and len(whole["lines"]) >= 2, whole
+        assert whole["lines"][0] == "dshd-run: run started", whole
+        first = json.loads(run("dshd read --json --head 1 quick"))
+        assert first["lines"] == whole["lines"][:1] and first["complete"] is False, first
+        assert first["invocationId"] == whole["invocationId"] == get("quick")["lastRun"]["invocationId"], first
+        everything = json.loads(run(f"dshd read --json --head {len(whole['lines'])} quick"))
+        assert everything == whole, everything
+        code, note = attempt("dshd read --head 1 quick")
+        assert code == 0 and "newer output follows" in note, note
+        receipt("quick", "read-head")
+
     # catches: a self-restart that loses the instance or resends a prompt:
     # the agent's own `dshd restart` ends with it, systemd completes the job
     with subtest("self-restart"):
@@ -451,6 +467,7 @@ pkgs.testers.runNixOSTest {
     finish([
         "P1.1", "P1.2", "P1.3", "P1.5", "P1.6", "P1.7", "P2.2", "P2.4", "P2.5", "P2.6", "P3.4",
         "P4.1", "P4.2", "P4.3", "linger-off", "run-interrupt", "run-output", "self-restart",
+        "read-head",
     ])
   '';
 }

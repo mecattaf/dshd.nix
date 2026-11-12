@@ -74,8 +74,8 @@ DSH ARGUMENTS against --cwd.
 --stdin FILE copies FILE, or with - this command's own stdin, into a
 headless instance at creation; every start gives dsh that copy as its
 stdin, which dsh reads as the task when the task is -. A task larger than
-one argument may be goes this way. Without --stdin, dsh's stdin is
-/dev/null.
+one argument (128 KiB on Linux) goes in this way. Without --stdin, dsh's
+stdin is /dev/null.
 
 dsh runs the profile as it is in its DSH home at every start. dshd only
 reads the profile's bundles, which fix the transport at creation; a shipped
@@ -173,7 +173,8 @@ or newer lines follow them, a note on stderr says so and complete is
 false. The journal of an acp instance holds dsh's stderr only: its stdout
 is the ACP channel.
 
-  -n, --lines LINES   newest lines to show; default 200
+  -n, --lines LINES   newest lines to show; default 200; journalctl's -n +N
+                      is refused: that is --head N
   --head LINES        the oldest LINES lines instead, from the run's start
   -f, --follow        keep printing new lines until the run ends
   --json              {"name","invocationId","complete","streams","lines"}"#;
@@ -184,7 +185,8 @@ Waits until the instance's current run ends, then exits as dsh did: with its
 own exit code, or 128+S when signal S ended it. A run that ended already is
 reported at once. At --timeout wait exits 124 and the instance continues.
 As JSON it exits 0, with the outcome ended or still-running and the fields
-exitCode, signal and reason.
+exitCode, signal and reason. wait reads only the journal lines written while
+it waits, so waiting in slices never reads the run again.
 
   --timeout SECONDS   how long to wait; default 180
   --json, --text      the output format";
@@ -303,7 +305,11 @@ mod tests {
         }))
     }
 
-    /// One value of every variant, so a new variant without a row fails here.
+    /// One value of every variant, so the tests below see every kind and
+    /// hint. Nothing here fails on a new variant: `known_variant` in
+    /// `error/unit_tests.rs` stops compiling until it is named, and its row
+    /// belongs here too.
+    #[expect(clippy::too_many_lines, reason = "one value per error variant")]
     fn every_error() -> Vec<Error> {
         let name = || "x".to_owned();
         vec![
@@ -318,6 +324,10 @@ mod tests {
             },
             Error::CreateWithRun(name()),
             Error::PatchUnreadable {
+                path: name(),
+                reason: name(),
+            },
+            Error::StdinUnreadable {
                 path: name(),
                 reason: name(),
             },

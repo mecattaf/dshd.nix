@@ -320,9 +320,13 @@ mod tests {
         let refused = |path: &str, client: &[u8]| match read_stdin(cwd, Path::new(path), client) {
             Err(error @ Error::StdinUnreadable { .. }) => {
                 assert_eq!((error.kind(), error.exit_code()), ("invalid-argument", 2));
-                let hint = error.hint().unwrap_or_default();
-                assert!(hint.contains(path), "the hint names {path}: {hint}");
-                error.to_string()
+                assert_eq!(error.hint().as_deref(), Some("dshd help run"));
+                let message = error.to_string();
+                assert!(
+                    message.starts_with(&format!("--stdin {path}: ")),
+                    "the message names {path}: {message}"
+                );
+                message
             }
             other => panic!("{path}: {other:?}"),
         };

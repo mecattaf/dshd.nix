@@ -33,6 +33,15 @@
   meant before; with `--head` it is false while newer lines follow, and
   stderr says so. `--head` excludes `-n` and `--follow`
   (`invalid-argument`). No record and no output shape changes.
+- `wait`, and `run --json`, follow the run's journal from now
+  (`journalctl -f -n 0`) instead of from its first line, since they print
+  none of it: `wait --timeout S` in a loop no longer reads the whole run
+  on every call. A text `run` still prints the run from its start. A
+  follower from now that starts after the runner's last line was written
+  finds the recorded end, or the unit down, by looking while its journal
+  is silent (first after 0.1 s, then at most every 5 s), and so does
+  `read --follow`, which could wait for ever there. No record and no
+  output shape changes.
 - `run --stdin FILE` gives a headless `dsh` its stdin, so a task larger
   than one argument (128 KiB on Linux) goes in as DSH's task `-`. dshd
   snapshots FILE, or with `--stdin -` its own stdin (at most 1 MiB), into
@@ -118,3 +127,7 @@
   `instance.json` and in the reports is the argv as typed, without a
   rewritten `--profile`. A record with `composition` is refused as
   unknown: remove the instance with `dshd rm NAME` and run it again.
+- **Breaking:** `read -n +N` is refused (`invalid-argument`) with a
+  pointer to `--head N`. It used to read as `-n N`, the newest N lines,
+  where journalctl's `-n +N` means the oldest; `--head N` is dshd's
+  spelling for those.

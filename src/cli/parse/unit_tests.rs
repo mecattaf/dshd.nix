@@ -191,7 +191,7 @@ fn read_wait_attach_arguments_parse() {
 }
 
 // catches: --head read as the newest lines, combined with -n or --follow, or
-// taken by a verb other than read
+// taken by a verb other than read; journalctl's -n +N read as the newest N
 #[test]
 fn read_head_parses() {
     assert_eq!(
@@ -230,6 +230,14 @@ fn read_head_parses() {
             "--head given twice",
         ),
         (&["get", "--head", "5", "a"], "get does not take --head"),
+        (
+            &["read", "-n", "+5", "a"],
+            "-n counts the newest lines; for the oldest 5: --head 5",
+        ),
+        (
+            &["read", "--lines=+1", "a"],
+            "-n counts the newest lines; for the oldest 1: --head 1",
+        ),
     ] {
         let error = parse(os(args)).unwrap_err();
         assert_eq!(error.kind(), "invalid-argument", "{args:?}");

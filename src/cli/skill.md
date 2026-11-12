@@ -78,6 +78,8 @@ $ dshd read batch
   and print an outcome `ended` or `still-running` with `exitCode`, `signal`
   and `reason`. Branch on `outcome` and `exitCode`, not on the process
   status; `read` has the output.
+- `wait` reads only what the run writes while it waits, so a loop of
+  `wait --timeout S` calls never reads the run again.
 
 ## Read what a session printed
 
@@ -95,6 +97,7 @@ run, stderr says `[dshd] incomplete: older output may be missing`; widen
 with `-n`. What a long run printed first, such as an id it announced at
 its start, is in `--head N`, its first N lines, which stay the same however
 long the run goes on; `complete` is then false when newer lines follow.
+journalctl's `-n +N` is refused: write `--head N`.
 A line longer than journald's `LineMax` (48K by default), which journald
 stores in pieces, is joined again: each line dsh wrote is one element of
 `lines`.

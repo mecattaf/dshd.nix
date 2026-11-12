@@ -218,6 +218,9 @@ A foreground headless `run` prints DSH's output until `dsh` exits and
 exits as it did. Ctrl+C ends the command, not the task; at `--timeout`
 (180 seconds by default) `run` exits 124 and the task continues.
 `dshd wait NAME` picks it up and `dshd read NAME` prints what it wrote.
+`wait`, and `run --json`, print nothing of the run and read only the
+journal lines written while they wait, so waiting in slices of
+`--timeout` never reads the run again.
 
 ## Verb reference
 
@@ -439,8 +442,11 @@ unless it says so:
 release, so a retained instance never waits for an approval nobody sees.
 Your own value, a profile patch and a home patch still win; set another
 mode in the release's `environment`, for example `"workspace-write"`, to
-change the default. dshd changes nothing about DSH telemetry; set
-`DSH_TELEMETRY_DISABLED = "1"` in a release's `environment` to turn it off.
+change the default. A web instance where people open sessions is
+attended, not retained: pin the permission rows in its profile or a
+patch rather than rely on this default. dshd changes nothing about DSH
+telemetry; set `DSH_TELEMETRY_DISABLED = "1"` in a release's
+`environment` to turn it off.
 
 ## Operating guide
 
@@ -545,8 +551,9 @@ last run; dshd writes no log files. Each run starts with the journal line
 `dshd-run: run started` and ends with `dshd-run: run ended: RESULT`.
 `read` prints the newest lines; `--head N` prints the run's first N
 instead, so what a long run printed at its start is one bounded read
-away, however much it printed since. `"complete": true` in `read --json`
-means the lines are the whole run so far. When they are not, because they
+away, however much it printed since. journalctl's spelling for those,
+`-n +N`, is refused with a pointer to `--head N`. `"complete": true` in
+`read --json` means the lines are the whole run so far. When they are not, because they
 do not reach back to the run's start (`-n`, or journald rotated them away)
 or newer lines follow them (`--head`), stderr says which and `complete` is
 false. journald stores a line longer than its `LineMax` (48K by default)

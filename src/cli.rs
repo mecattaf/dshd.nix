@@ -50,7 +50,7 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 180;
 const SKILL: &str = include_str!("cli/skill.md");
 
 /// `dshd run [--bg] [--name N] [--release R] [--cwd D] [--label K=V]...
-/// [--patch PATH]... [--timeout S] -- DSH ARGUMENTS`: create the instance,
+/// [--patch PATH]... [--stdin FILE] [--timeout S] -- DSH ARGUMENTS`: create the instance,
 /// or match the stored recipe of `--name`, and start it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunArgs {
@@ -64,6 +64,9 @@ pub struct RunArgs {
     pub labels: BTreeMap<String, String>,
     /// `--patch PATH`, repeatable: overlays dshd snapshots into the instance at creation.
     pub patches: Vec<PathBuf>,
+    /// `--stdin FILE`: the content dshd snapshots at creation and hands a
+    /// headless dsh as its stdin at every start; `-` reads dshd's own stdin.
+    pub stdin: Option<PathBuf>,
     /// `--bg`: return once the instance runs, also for a headless task.
     pub bg: bool,
     /// `--timeout S`: how long a foreground headless run follows its task.
@@ -80,6 +83,7 @@ impl Default for RunArgs {
             cwd: None,
             labels: BTreeMap::new(),
             patches: Vec::new(),
+            stdin: None,
             bg: false,
             timeout: DEFAULT_TIMEOUT_SECS,
             argv: Vec::new(),
@@ -462,6 +466,35 @@ mod tests {
             &["run", "--patch=", "--", "web"],
             &["run", "--patch"],
             &["start", "--patch", "x", "a"],
+        ] {
+            let error = parse(os(refused)).unwrap_err();
+            assert_eq!(error.kind(), "invalid-argument", "{refused:?}: {error}");
+        }
+    }
+
+    // catches: dshd's --stdin dropped, read from dsh's argv after --, given twice, an empty value accepted,
+    // or - (dshd's own stdin) refused
+    #[test]
+    fn run_stdin_flag_parses_once() {
+        for (given, want) in [("task.txt", "task.txt"), ("-", "-")] {
+            let Verb::Run(args) =
+                parse(os(&["run", "--stdin", given, "--", "headless", "-"])).unwrap()
+            else {
+                panic!("not run");
+            };
+            assert_eq!(args.stdin, Some(PathBuf::from(want)));
+            assert_eq!(args.argv, os(&["headless", "-"]));
+        }
+        let Verb::Run(none) = parse(os(&["run", "--", "headless", "--stdin", "x"])).unwrap() else {
+            panic!("not run");
+        };
+        assert_eq!(none.stdin, None);
+        for refused in [
+            &["run", "--stdin", "", "--", "headless", "-"][..],
+            &["run", "--stdin=", "--", "headless", "-"],
+            &["run", "--stdin", "a", "--stdin", "b", "--", "headless", "-"],
+            &["run", "--stdin"],
+            &["start", "--stdin", "x", "a"],
         ] {
             let error = parse(os(refused)).unwrap_err();
             assert_eq!(error.kind(), "invalid-argument", "{refused:?}: {error}");

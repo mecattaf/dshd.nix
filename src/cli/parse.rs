@@ -98,6 +98,7 @@ impl Word {
                 "--cwd",
                 "--label",
                 "--patch",
+                "--stdin",
                 "--timeout",
                 "--json",
                 "--text",
@@ -132,6 +133,7 @@ struct Raw {
     cwd: Option<OsString>,
     labels: Vec<OsString>,
     patches: Vec<OsString>,
+    stdin: Option<OsString>,
     lines: Option<OsString>,
     head: Option<OsString>,
     timeout: Option<OsString>,
@@ -215,6 +217,10 @@ fn lex(head: Vec<OsString>) -> Result<Raw, Error> {
             Arg::Long("patch") => {
                 raw.mark("--patch", false)?;
                 raw.patches.push(value(&mut parser)?);
+            }
+            Arg::Long("stdin") => {
+                raw.mark("--stdin", true)?;
+                raw.stdin = Some(value(&mut parser)?);
             }
             Arg::Long("timeout") => {
                 raw.mark("--timeout", true)?;
@@ -380,12 +386,18 @@ fn run(raw: Raw, rest: Vec<OsString>, tail: Option<Vec<OsString>>) -> Result<Run
     if raw.patches.iter().any(|patch| patch.is_empty()) {
         return Err(Error::InvalidArgument("--patch needs a file".into()));
     }
+    if raw.stdin.as_ref().is_some_and(|stdin| stdin.is_empty()) {
+        return Err(Error::InvalidArgument(
+            "--stdin needs a file, or - for dshd's own stdin".into(),
+        ));
+    }
     Ok(RunArgs {
         name: raw.name.map(name_arg).transpose()?,
         release,
         cwd: raw.cwd.map(PathBuf::from),
         labels: labels("--label ", raw.labels)?,
         patches: raw.patches.into_iter().map(PathBuf::from).collect(),
+        stdin: raw.stdin.map(PathBuf::from),
         bg,
         timeout: seconds(raw.timeout.as_deref())?,
         argv,

@@ -204,8 +204,7 @@ fn stdin_snapshot_is_headless_dsh_stdin_at_every_start() -> TestResult {
         },
     )?;
     let dir = instance.dir();
-    let mut record: InstanceRecord =
-        serde_json::from_slice(&std::fs::read(dir.instance_json())?)?;
+    let mut record: InstanceRecord = serde_json::from_slice(&std::fs::read(dir.instance_json())?)?;
     let snapshot = RunStdin::of(task.as_bytes(), dshd::record::OsText::from("task.txt"));
     let digest = snapshot.sha256.clone();
     record.stdin = Some(snapshot);

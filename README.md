@@ -42,14 +42,18 @@ system configuration supplies `dsh`, and dshd runs the release it is given.
   another can attach and receive what it missed.
 - A headless task runs once. dshd never submits its prompt again unless you
   ask for it with `dshd start --rerun NAME`.
+- `run --stdin FILE` snapshots a headless task's input: every start gives
+  `dsh` that copy as its stdin, so a task larger than one argument goes in
+  as `-`; without it a headless `dsh` reads `/dev/null`.
 - Output is JSON when stdout is not a terminal, so scripts and agents read
   the same objects people see as text. `dshd --skill` prints a guide for
   agents.
 
 ```
 %S/dshd/NAME/
-  instance.json   the recipe (0600): id, release name, cwd, args, patches, environment, profile, transport, labels
+  instance.json   the recipe (0600): id, release name, cwd, args, patches, stdin, environment, profile, transport, labels
   patches/        the run --patch snapshots (0700), NN-SHA256PREFIX.yml (0600), only when given
+  stdin           the run --stdin snapshot (0600), only when given
   last-run.json   how the current or last run started and, once it ended, how it ended
   current         -> /nix/store/...-dshd-release-...   the release the next start uses (GC root)
   booted          -> /nix/store/...-dshd-release-...   the running release; current again after a stop (GC root)
@@ -328,6 +332,27 @@ the instance. An instance made without `--patch` keeps the record it
 always had; one made with it carries the `patches` key, which an older
 dshd does not know and refuses to act on, so after a rollback such an
 instance is recreated with `dshd rm NAME` and `run`.
+
+**Headless input.** A headless task reaches `dsh` through its argv, which
+Linux caps at 128 KiB per argument. For a larger task, or one kept out of
+the argv, give DSH's task `-` ("read the task from stdin") and the input
+with `dshd run --stdin FILE` (before `--`), as in
+`dshd run --bg --stdin ./brief.md --name task-8 -- worker -`; with
+`--stdin -` dshd reads its own stdin to the end, as in
+`git diff | dshd run --bg --stdin - --name review-3 -- worker -`. At
+creation dshd copies the input, a readable regular file or stdin of at
+most 1 MiB (a relative FILE is yours), to `%S/dshd/NAME/stdin` and records
+its sha256 in the recipe as `stdin`; anything else is `invalid-argument`,
+naming FILE. Every start, `restart`, `update` and `start --rerun` included,
+gives a headless `dsh` that copy as its stdin, and FILE is never read
+again. The same name with other input, or none, is
+`exists-different-recipe`; the same content from another path is the same
+recipe. A start refuses a copy that no longer holds the recorded content.
+A web or acp instance has no task to read, so `--stdin` for a profile that
+selects either is `invalid-argument`. Without `--stdin` a headless `dsh`
+reads `/dev/null`, as before, and the record is written as it always was;
+one made with it carries the `stdin` key, which an older dshd refuses to
+act on.
 
 ### One configuration, several apps
 

@@ -27,6 +27,16 @@
   meant before; with `--head` it is false while newer lines follow, and
   stderr says so. `--head` excludes `-n` and `--follow`
   (`invalid-argument`). No record and no output shape changes.
+- `run --stdin FILE` gives a headless `dsh` its stdin, so a task larger
+  than one argument (128 KiB on Linux) goes in as DSH's task `-`. dshd
+  snapshots FILE, or with `--stdin -` its own stdin (at most 1 MiB), into
+  `%S/dshd/NAME/stdin` at creation, records its sha256 in the recipe as
+  `stdin`, and gives every start that copy as stdin; other input under the
+  same name is `exists-different-recipe`, and a start refuses a copy that
+  changed. A profile that selects web or acp refuses `--stdin`
+  (`invalid-argument`). Without it a headless `dsh` reads `/dev/null` as
+  before and the record is written as it always was. No output shape
+  changes.
 - Each run records how it ended (`stopped`, `stopped-without-intent`,
   `exited`, `failed`, `interrupted`), from the stop intent dshd writes
   before it stops an instance; a unit the user masked shows as `masked`.

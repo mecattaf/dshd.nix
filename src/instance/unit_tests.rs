@@ -43,6 +43,7 @@ fn request(scratch: &Path, name: &str) -> CreateRequest {
         cwd,
         args: vec!["web".into(), "--port".into(), "4100".into()],
         patches: Vec::new(),
+        stdin: None,
         environment: vec![EnvVar {
             name: "TERM".into(),
             value: "xterm".into(),
@@ -200,6 +201,7 @@ fn compare_recipe_reports_fields() {
             .map(|arg| arg.as_os_str().to_owned())
             .collect(),
         patches: Vec::new(),
+        stdin: None,
         environment: stored.environment.clone(),
         profile: stored.profile.clone(),
         transport: stored.transport,
@@ -514,6 +516,7 @@ fn patch_digest_changes_recipe_identity() {
             patch_source(0, "a: 1\n", "/elsewhere/a.yml"),
             patch_source(1, "b: 2\n", "b.yml"),
         ],
+        stdin: None,
         environment: stored.environment.clone(),
         profile: stored.profile.clone(),
         transport: stored.transport,
@@ -555,4 +558,54 @@ fn patch_digest_changes_recipe_identity() {
             .collect();
         assert!(shown.contains(&short), "{shown}");
     }
+}
+
+// catches: a stdin snapshot not written with the record, written with a loose mode, a creation without
+// --stdin leaving a stdin file or key, or another stdin content (or none) accepted as the same recipe
+#[test]
+fn stdin_snapshot_is_written_and_part_of_the_recipe() {
+    let scratch = Scratch::new("instance-stdin");
+    let root = StateRoot::new(scratch.path().join("state"));
+    let (nix_store, _) = fake_nix_store(scratch.path());
+    let plain = create(&root, &nix_store, request(scratch.path(), "plain")).unwrap();
+    assert!(!plain.dir.stdin().exists());
+    assert_eq!(plain.record.stdin, None);
+
+    let source = |text: &str, from: &str| StdinSource {
+        stdin: RunStdin::of(text.as_bytes(), OsText::from(from)),
+        bytes: text.as_bytes().to_vec(),
+    };
+    let mut request = request(scratch.path(), "fed");
+    request.stdin = Some(source("the task\n", "task.txt"));
+    let made = create(&root, &nix_store, request.clone()).unwrap();
+    assert_eq!(fs::read(made.dir.stdin()).unwrap(), b"the task\n");
+    let bits = fs::metadata(made.dir.stdin()).unwrap().permissions().mode() & 0o777;
+    assert_eq!(bits, 0o600);
+    let loaded = load_strict(&root, &made.name).unwrap();
+    assert_eq!(
+        loaded.record.stdin,
+        request.stdin.as_ref().map(|s| s.stdin.clone())
+    );
+
+    request.stdin = Some(source("the task\n", "-"));
+    assert_eq!(
+        compare_recipe(&made.record, &request),
+        None,
+        "the same content from elsewhere is the same recipe"
+    );
+    for changed in [Some(source("another task\n", "task.txt")), None] {
+        request.stdin = changed;
+        let difference = compare_recipe(&made.record, &request).unwrap();
+        let fields: Vec<&str> = difference.fields.iter().map(|(f, _, _)| *f).collect();
+        assert_eq!(fields, ["stdin"], "{:?}", request.stdin);
+    }
+    let difference = compare_recipe(&plain.record, &{
+        let mut fed = request.clone();
+        fed.name = plain.name.clone();
+        fed.stdin = Some(source("x", "x"));
+        fed
+    })
+    .unwrap();
+    let (_, stored, _) = difference.fields.first().unwrap();
+    assert_eq!(stored, "none");
 }

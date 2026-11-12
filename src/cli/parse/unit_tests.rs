@@ -178,43 +178,6 @@ fn read_wait_attach_arguments_parse() {
     assert_eq!(verb(&["attach", "--print-url", "a"]), Verb::Attach(web));
 }
 
-// catches: labels, help or agent discovery parsed as the wrong verb or arguments
-#[test]
-fn labels_and_discovery_arguments_parse() {
-    let labels = BTreeMap::from([
-        ("k".to_owned(), "v".to_owned()),
-        ("gone".to_owned(), String::new()),
-    ]);
-    assert_eq!(
-        verb(&["label", "a", "k=v", "gone="]),
-        Verb::Label(LabelArgs {
-            name: name("a"),
-            labels
-        })
-    );
-    assert_eq!(verb(&["help"]), Verb::Help(None));
-    assert_eq!(verb(&["help", "read"]), Verb::Help(Some("read".into())));
-    assert_eq!(verb(&["stop", "--help"]), Verb::Help(Some("stop".into())));
-    assert_eq!(verb(&["-h"]), Verb::Help(None));
-    assert_eq!(verb(&["--version"]), Verb::Version);
-    assert_eq!(verb(&["-V"]), Verb::Version);
-    assert_eq!(verb(&["--skill"]), Verb::Skill);
-}
-
-// catches: --json, --help or a NAME after -- taken out of dsh's own argv
-#[test]
-fn dsh_argv_is_verbatim() {
-    let argv = os(&["web", "--json", "--help", "-n", "x"]);
-    let parsed = verb(&["run", "--json", "--", "web", "--json", "--help", "-n", "x"]);
-    assert_eq!(
-        parsed,
-        Verb::Run(RunArgs {
-            argv,
-            ..RunArgs::default()
-        })
-    );
-}
-
 // catches: --head read as the newest lines, combined with -n or --follow, or
 // taken by a verb other than read
 #[test]
@@ -261,6 +224,43 @@ fn read_head_parses() {
         assert_eq!(error.to_string(), message, "{args:?}");
     }
     assert_eq!(exit(&["read", "--head", "a"]), 2);
+}
+
+// catches: labels, help or agent discovery parsed as the wrong verb or arguments
+#[test]
+fn labels_and_discovery_arguments_parse() {
+    let labels = BTreeMap::from([
+        ("k".to_owned(), "v".to_owned()),
+        ("gone".to_owned(), String::new()),
+    ]);
+    assert_eq!(
+        verb(&["label", "a", "k=v", "gone="]),
+        Verb::Label(LabelArgs {
+            name: name("a"),
+            labels
+        })
+    );
+    assert_eq!(verb(&["help"]), Verb::Help(None));
+    assert_eq!(verb(&["help", "read"]), Verb::Help(Some("read".into())));
+    assert_eq!(verb(&["stop", "--help"]), Verb::Help(Some("stop".into())));
+    assert_eq!(verb(&["-h"]), Verb::Help(None));
+    assert_eq!(verb(&["--version"]), Verb::Version);
+    assert_eq!(verb(&["-V"]), Verb::Version);
+    assert_eq!(verb(&["--skill"]), Verb::Skill);
+}
+
+// catches: --json, --help or a NAME after -- taken out of dsh's own argv
+#[test]
+fn dsh_argv_is_verbatim() {
+    let argv = os(&["web", "--json", "--help", "-n", "x"]);
+    let parsed = verb(&["run", "--json", "--", "web", "--json", "--help", "-n", "x"]);
+    assert_eq!(
+        parsed,
+        Verb::Run(RunArgs {
+            argv,
+            ..RunArgs::default()
+        })
+    );
 }
 
 // catches: a bad flag, a flag on the wrong verb or a stray word accepted instead of exit 2

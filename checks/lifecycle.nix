@@ -465,9 +465,9 @@ pkgs.testers.runNixOSTest {
         receipt("web-1", "linger-off", report)
 
     finish([
+        "read-head",
         "P1.1", "P1.2", "P1.3", "P1.5", "P1.6", "P1.7", "P2.2", "P2.4", "P2.5", "P2.6", "P3.4",
         "P4.1", "P4.2", "P4.3", "linger-off", "run-interrupt", "run-output", "self-restart",
-        "read-head",
     ])
   '';
 }

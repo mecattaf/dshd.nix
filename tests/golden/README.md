@@ -146,8 +146,11 @@ itself with status N); a unit without a file has never run.
 
 `journalctl` prints a journal: with `_SYSTEMD_INVOCATION_ID=ID`,
 `$FAKE_DIR/invocations/ID`, else `$FAKE_DIR/journal`; a missing file is
-empty. `-n +K` prints the oldest K lines and `-n K` the newest K. `-f`
-with `--no-tail` prints the whole journal and with `-n 0` none of it,
+empty. With `-o json` it prints one entry per line: the journal's `.json`
+sibling when there is one, as `read-long-line` uses for a line journald
+broke at `LineMax`, else `{"MESSAGE":"LINE"}` for each line, and `-n`
+counts entries. `-n +K` prints the oldest K lines and `-n K` the newest
+K. `-f` with `--no-tail` prints the whole journal and with `-n 0` none of it,
 stopping after the runner's last line (`dshd-run: run ended`) or at the
 end of the file, since it has no later lines to wait for. `nix-store
 --option substitute false --realise PATH --add-root LINK` points `LINK` at

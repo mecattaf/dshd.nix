@@ -514,8 +514,13 @@ away, however much it printed since. `"complete": true` in `read --json`
 means the lines are the whole run so far. When they are not, because they
 do not reach back to the run's start (`-n`, or journald rotated them away)
 or newer lines follow them (`--head`), stderr says which and `complete` is
-false. An ACP instance's journal holds DSH's stderr only,
-since its stdout is the ACP channel, and `read` says so on stderr.
+false. journald stores a line longer than its `LineMax` (48K by default)
+as several entries and marks them `_LINE_BREAK=line-max`; `read`, `run`
+and `wait` join them, so each line DSH wrote, such as one `--json` event,
+is one line of the output and one element of `lines`, and `-n` and
+`--head` count those lines; `journalctl -u` shows the pieces. An ACP
+instance's journal holds DSH's stderr only, since its stdout is the ACP
+channel, and `read` says so on stderr.
 `systemctl --user status dshd@NAME.service` shows the unit, and the last
 line of `/proc/<pid>/cgroup` of any process names the instance that owns
 it.

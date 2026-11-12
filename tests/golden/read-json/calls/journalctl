@@ -1,2 +1,2 @@
---user _SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef -q -o cat -n 200
---user _SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef -q -o cat -n +1
+--user _SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef -q -o json --all --output-fields=MESSAGE,_LINE_BREAK -n 201
+--user _SYSTEMD_INVOCATION_ID=0123456789abcdef0123456789abcdef -q -o json --all --output-fields=MESSAGE,_LINE_BREAK -n +1

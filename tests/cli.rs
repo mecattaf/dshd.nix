@@ -41,7 +41,7 @@ const DSH_HOME: &str = "dsh";
 /// The fakes put on the case's `PATH`.
 const FAKES: [&str; 4] = ["systemctl", "journalctl", "nix-store", "xdg-open"];
 /// The utilities the fakes run, linked from the test's own `PATH`.
-const UTILITIES: [&str; 7] = ["cat", "mkdir", "ln", "rm", "head", "tail", "sleep"];
+const UTILITIES: [&str; 8] = ["cat", "mkdir", "ln", "rm", "head", "tail", "sleep", "sed"];
 /// What a case directory may hold.
 const CASE_ENTRIES: [&str; 11] = [
     "argv", "exit", "stdout", "stderr", "env", "root", "links", "absent", "calls", "gone", "kept",

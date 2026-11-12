@@ -1,0 +1,5 @@
+{"MESSAGE":"dshd-run: run started"}
+{"MESSAGE":"{\"type\":\"final\",\"text\":\"one answer that journald ","_LINE_BREAK":"line-max"}
+{"MESSAGE":"broke at LineMax into three ","_LINE_BREAK":"line-max"}
+{"MESSAGE":"entries\"}"}
+{"MESSAGE":"dshd-run: run ended: success"}

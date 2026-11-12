@@ -20,6 +20,12 @@
 - A headless task runs once: a foreground `run` prints its output and
   exits as `dsh` did, `wait` and `read` pick it up later, and only
   `start --rerun` submits the prompt again.
+- `read`, `run` and `wait` join a line journald broke at its `LineMax`
+  (48K by default, marked `_LINE_BREAK=line-max`), so a line DSH wrote,
+  such as a long `--json` event, is one line of the output and one
+  element of `read --json`'s `lines`, and `-n` and `--head` count those
+  lines. They read the journal as `-o json` for that mark. No record and
+  no output shape changes.
 - `read --head N` prints the oldest N lines of the current or last run
   instead of the newest, in one journal query, so a supervisor finds what
   a run printed at its start without reading the whole run. `complete`

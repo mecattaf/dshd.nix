@@ -25,6 +25,7 @@ mod attach;
 mod context;
 mod follow;
 mod help;
+mod journal;
 mod label;
 mod lifecycle;
 mod ls;

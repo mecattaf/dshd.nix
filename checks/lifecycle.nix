@@ -506,6 +506,35 @@ pkgs.testers.runNixOSTest {
         assert code == 0 and "newer output follows" in note, note
         receipt("quick", "read-head")
 
+    # catches: one stdout line longer than journald's LineMax (48K by
+    # default) shown as the pieces journald stored it in, by the followed
+    # run, by read, or by a -n or --head window that starts or ends inside it
+    with subtest("read a long line"):
+        long = "a" * 60000
+        made = '"$(printf %60000s | tr " " a)"'
+
+        def at(lines: list[str]) -> list[int]:
+            """Where the stub's long line is: one line, whole."""
+            pieces = [i for i, line in enumerate(lines) if "aaaa" in line]
+            assert len(pieces) == 1 and lines[pieces[0]].endswith(long), [len(lines[i]) for i in pieces]
+            return pieces
+
+        out = run(f"env DSH_STUB_MODE=headless dshd run --text --name long -- headless {made}")
+        at(out.splitlines())
+        whole = json.loads(run("dshd read --json long"))
+        assert whole["complete"] is True, whole["complete"]
+        [i] = at(whole["lines"])
+        after = len(whole["lines"]) - i
+        tail = json.loads(run(f"dshd read --json -n {after} long"))
+        assert tail["lines"] == whole["lines"][i:], [len(line) for line in tail["lines"]]
+        if after > 1:
+            newer = json.loads(run(f"dshd read --json -n {after - 1} long"))
+            assert newer["lines"] == whole["lines"][i + 1 :], [len(line) for line in newer["lines"]]
+        head = json.loads(run(f"dshd read --json --head {i + 1} long"))
+        assert head["lines"] == whole["lines"][: i + 1], [len(line) for line in head["lines"]]
+        assert head["complete"] is (after == 1), head["complete"]
+        receipt("long", "read-long-line")
+
     # catches: a self-restart that loses the instance or resends a prompt:
     # the agent's own `dshd restart` ends with it, systemd completes the job
     with subtest("self-restart"):
@@ -545,6 +574,7 @@ pkgs.testers.runNixOSTest {
 
     finish([
         "read-head",
+        "read-long-line",
         "P1.1", "P1.2", "P1.3", "P1.5", "P1.6", "P1.7", "P2.2", "P2.4", "P2.5", "P2.6", "P3.4",
         "P4.1", "P4.2", "P4.3", "linger-off", "run-interrupt", "run-output", "run-patch", "self-restart",
         "stop-invocation",

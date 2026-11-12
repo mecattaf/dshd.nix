@@ -99,7 +99,13 @@ fn lifecycle_arguments_parse() {
     assert_eq!(verb(&["get", "a"]), Verb::Get(one("a")));
     assert_eq!(verb(&["enable", "a"]), Verb::Enable(one("a")));
     assert_eq!(verb(&["disable", "a"]), Verb::Disable(one("a")));
-    assert_eq!(verb(&["rm", "a"]), Verb::Rm(one("a")));
+    assert_eq!(
+        verb(&["rm", "a"]),
+        Verb::Rm(RmArgs {
+            name: name("a"),
+            invocation: None
+        })
+    );
     assert_eq!(
         verb(&["update", "-R", "a"]),
         Verb::Update(UpdateArgs {
@@ -327,13 +333,6 @@ fn rm_invocation_parses() {
         Verb::Rm(RmArgs {
             name: name("a"),
             invocation: Some(id.into()),
-        })
-    );
-    assert_eq!(
-        verb(&["rm", "a"]),
-        Verb::Rm(RmArgs {
-            name: name("a"),
-            invocation: None,
         })
     );
     assert_eq!(kind(&["rm", "--invocation", "a1", "a"]), "invalid-argument");

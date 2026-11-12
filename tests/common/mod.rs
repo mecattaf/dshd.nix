@@ -203,7 +203,7 @@ impl Instance {
         typed.extend(spec.args.iter().map(OsString::from));
         let selected = launch::selected_profile(&typed)?;
         let dsh = Tool::at("dsh", release.join(RELEASE_DSH));
-        let transport = profile::transport(&dsh, dsh.command(), &dsh_home, &selected)?;
+        let transport = profile::transport(&dsh, dsh.command(), &dsh_home, &selected)?.transport;
         let mut variables = vec![
             (OsString::from("PATH"), host_path()),
             (OsString::from("HOME"), self.path(HOME).into_os_string()),
@@ -227,6 +227,7 @@ impl Instance {
             release: RELEASE_NAME.to_owned(),
             cwd: OsText::new(self.path(WORK)),
             args: typed.into_iter().map(OsText::from).collect(),
+            patches: Vec::new(),
             environment: launch::capture_environment(&variables, &release_file.unset_environment),
             profile: ProfileRef {
                 name: selected,

@@ -1,0 +1,51 @@
+{
+  "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+  "name": "snap",
+  "release": "%RELEASE%",
+  "cwd": "%ROOT%/work",
+  "args": [
+    "headless",
+    "-p",
+    "summarise the work directory"
+  ],
+  "patches": [
+    {
+      "file": "00-fdf9ee7ee24114d3.yml",
+      "sha256": "fdf9ee7ee24114d35e36e57d0e3e783935d5745e830f42c8bc3dee51988c745f",
+      "source": "./over.yml"
+    },
+    {
+      "file": "01-b4132faa2bfec915.yml",
+      "sha256": "b4132faa2bfec9154eba914de1fd8d32526ae81c59fdbca92df30d8e28bea04c",
+      "source": "%ROOT%/work/base.yml"
+    }
+  ],
+  "environment": [
+    {
+      "name": "DSH_HOME",
+      "value": "%ROOT%/dsh"
+    },
+    {
+      "name": "FAKE_DIR",
+      "value": "%ROOT%/fake"
+    },
+    {
+      "name": "HOME",
+      "value": "%ROOT%/home"
+    },
+    {
+      "name": "NO_COLOR",
+      "value": "1"
+    },
+    {
+      "name": "PATH",
+      "value": "%ROOT%/bin"
+    }
+  ],
+  "profile": {
+    "name": "headless",
+    "dshHome": "%ROOT%/dsh"
+  },
+  "transport": "none",
+  "createdAt": 1794009600
+}

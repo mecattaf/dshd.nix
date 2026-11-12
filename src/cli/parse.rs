@@ -97,6 +97,7 @@ impl Word {
                 "--release",
                 "--cwd",
                 "--label",
+                "--patch",
                 "--timeout",
                 "--json",
                 "--text",
@@ -130,6 +131,7 @@ struct Raw {
     release: Option<OsString>,
     cwd: Option<OsString>,
     labels: Vec<OsString>,
+    patches: Vec<OsString>,
     lines: Option<OsString>,
     timeout: Option<OsString>,
     via: Option<OsString>,
@@ -207,6 +209,10 @@ fn lex(head: Vec<OsString>) -> Result<Raw, Error> {
             Arg::Long("label") => {
                 raw.mark("--label", false)?;
                 raw.labels.push(value(&mut parser)?);
+            }
+            Arg::Long("patch") => {
+                raw.mark("--patch", false)?;
+                raw.patches.push(value(&mut parser)?);
             }
             Arg::Long("timeout") => {
                 raw.mark("--timeout", true)?;
@@ -358,11 +364,15 @@ fn run(raw: Raw, rest: Vec<OsString>, tail: Option<Vec<OsString>>) -> Result<Run
         })?),
         None => None,
     };
+    if raw.patches.iter().any(|patch| patch.is_empty()) {
+        return Err(Error::InvalidArgument("--patch needs a file".into()));
+    }
     Ok(RunArgs {
         name: raw.name.map(name_arg).transpose()?,
         release,
         cwd: raw.cwd.map(PathBuf::from),
         labels: labels("--label ", raw.labels)?,
+        patches: raw.patches.into_iter().map(PathBuf::from).collect(),
         bg,
         timeout: seconds(raw.timeout.as_deref())?,
         argv,

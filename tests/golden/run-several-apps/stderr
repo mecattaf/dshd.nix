@@ -1,0 +1,1 @@
+dshd: warning: profile both lists several apps (dsh-headless, dsh-web-app): DSH mounts every bundle a profile lists in one process, and dshd holds the instance as transport none; give each app its own profile

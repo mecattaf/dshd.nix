@@ -43,3 +43,51 @@ fn ending_explains_a_restart() {
         "dsh was killed by signal 9; exiting 137"
     );
 }
+
+// catches: a start that hands dsh a snapshot that is gone, whose content changed since creation, or whose recorded
+// name reaches outside the instance's patches directory; or the snapshot not inserted after the profile
+#[test]
+fn check_patches_refuses_a_changed_or_missing_snapshot() {
+    use std::fs;
+
+    use crate::fsx::testing::Scratch;
+
+    let scratch = Scratch::new("runner-patches");
+    let dir = InstanceDir::new(scratch.path().to_path_buf());
+    let name = InstanceName::parse("web-1").unwrap();
+    let mut record: InstanceRecord =
+        serde_json::from_str(include_str!("../../tests/fixtures/instance.json")).unwrap();
+    let patch = RunPatch::of(0, b"a: 1\n", OsText::from("a.yml"));
+    record.patches = vec![patch.clone()];
+    fs::create_dir_all(dir.patches()).unwrap();
+    let refused = |record: &InstanceRecord| {
+        matches!(
+            check_patches(&name, &dir, record),
+            Err(Error::InconsistentState { .. })
+        )
+    };
+    assert!(refused(&record), "a missing snapshot");
+
+    fs::write(dir.patch(&patch.file), b"a: 1\n").unwrap();
+    check_patches(&name, &dir, &record).unwrap();
+    let (args, _) = launch_args(&dir, &record).unwrap();
+    let snapshot = dir.patch(&patch.file).into_os_string();
+    let want: Vec<OsString> = vec![
+        "web".into(),
+        "--patch".into(),
+        snapshot,
+        "--port".into(),
+        "4100".into(),
+        "--no-open".into(),
+    ];
+    assert_eq!(args, want);
+
+    fs::write(dir.patch(&patch.file), b"a: 2\n").unwrap();
+    assert!(refused(&record), "a snapshot whose content changed");
+
+    fs::write(scratch.path().join("outside.yml"), b"a: 1\n").unwrap();
+    for entry in &mut record.patches {
+        entry.file = "../outside.yml".to_owned();
+    }
+    assert!(refused(&record), "a name outside the patches directory");
+}

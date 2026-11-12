@@ -1,0 +1,2 @@
+state/dshd/snap/current %RELEASE%
+state/dshd/snap/booted %RELEASE%

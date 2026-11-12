@@ -1,0 +1,14 @@
+run
+--text
+--name
+snap
+--release
+%RELEASE%
+--patch
+./over.yml
+--patch
+%ROOT%/work/base.yml
+--
+headless
+-p
+summarise the work directory

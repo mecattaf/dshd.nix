@@ -1,0 +1,4 @@
+Created dshd instance both.
+systemctl --user start dshd@both.service
+both: running(stub-dsh-golden)
+Follow with: dshd read --follow both

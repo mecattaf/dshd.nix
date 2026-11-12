@@ -1,0 +1,1 @@
+{"error":{"kind":"invalid-argument","message":"--patch ./absent.yml: no such file","hint":"--patch takes a readable regular file of at most 1 MiB; check ./absent.yml"}}

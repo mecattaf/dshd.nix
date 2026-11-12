@@ -84,6 +84,12 @@ pub(super) fn status_page(report: &StatusReport) -> String {
     if let Some(profile) = &report.profile {
         page.field("profile", &profile_text(profile));
     }
+    for patch in &report.patches {
+        page.field(
+            &format!("patch {}", patch.file),
+            &format!("sha256 {} from {}", patch.sha256, patch.source),
+        );
+    }
     if let Some(web) = &report.web {
         let url = web
             .url
@@ -115,6 +121,12 @@ pub(super) fn entry_of(report: &StatusReport) -> ListEntry {
         name: report.name.clone(),
         state: report.state,
         transport: report.transport,
+        profile: report.profile.as_ref().map(|profile| profile.name.clone()),
+        patches: report
+            .profile
+            .as_ref()
+            .map(|profile| profile.patches.clone())
+            .unwrap_or_default(),
         release: report.release.as_ref().map(|release| release.label.clone()),
         release_state: report.release.as_ref().map(|release| release.state),
         enabled: report.enabled,
@@ -167,7 +179,12 @@ fn release_lines(page: &mut Page, release: &ReleaseReport) {
 }
 
 fn profile_text(profile: &ProfileReport) -> String {
-    format!("{} in {}", profile.name, profile.dsh_home)
+    let mut text = format!("{} in {}", profile.name, profile.dsh_home);
+    if !profile.patches.is_empty() {
+        text.push_str(", patches: ");
+        text.push_str(&profile.patches.join(", "));
+    }
+    text
 }
 
 fn acp_lines(page: &mut Page, acp: &ProbeLine) {
@@ -324,6 +341,8 @@ mod tests {
             name: "web-1".to_owned(),
             state,
             transport: Some(Transport::Web),
+            profile: Some("web".to_owned()),
+            patches: Vec::new(),
             release: Some("dsh-0.2.2-rc.1".to_owned()),
             release_state: Some(release_state),
             enabled: false,

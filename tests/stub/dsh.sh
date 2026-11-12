@@ -25,6 +25,9 @@
 #
 # Grammar honoured: a profile word as the bare first token, --profile V,
 # --profile=V, --patch V and --patch=V. -V and --version print a version.
+# For each --patch P, in order, it prints "stub-dsh: patch P sha256=D" on
+# stderr, which a unit's journal keeps: D is the sha256 of P's content, or
+# "unreadable" when P cannot be read.
 # Everything after the launcher flags is the app and its arguments.
 # --dump-default-config materialises a shipped profile as DSH does when it
 # has no package.json yet: it writes $DSH_HOME/profiles/<profile>/package.json
@@ -109,6 +112,11 @@ run_after_ready() {
 	[ -n "${DSH_STUB_RUN_AFTER_READY:-}" ] || return 0
 	sh -c "$DSH_STUB_RUN_AFTER_READY" </dev/null
 	log "after-ready $$ $?"
+}
+
+report_patch() {
+	digest=$(sha256sum 2>/dev/null <"$1") || digest=unreadable
+	printf 'stub-dsh: patch %s sha256=%s\n' "$1" "${digest%% *}" >&2
 }
 
 dsh_home() {
@@ -412,14 +420,21 @@ while [ "$#" -gt 0 ]; do
 			printf 'dsh: %s needs a value\n' "$1" >&2
 			exit 2
 		fi
-		[ "$1" = --patch ] || profile=$2
+		if [ "$1" = --patch ]; then
+			report_patch "$2"
+		else
+			profile=$2
+		fi
 		shift 2
 		;;
 	--profile=*)
 		profile=${1#--profile=}
 		shift
 		;;
-	--patch=*) shift ;;
+	--patch=*)
+		report_patch "${1#--patch=}"
+		shift
+		;;
 	--dump-default-config)
 		dump=1
 		shift

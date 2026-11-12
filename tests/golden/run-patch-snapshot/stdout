@@ -1,0 +1,4 @@
+Created dshd instance snap.
+systemctl --user start dshd@snap.service
+snap: running(stub-dsh-golden)
+Follow with: dshd read --follow snap

@@ -35,6 +35,20 @@ transport.
   under the same name is refused with `exists-different-recipe`.
 - SDK profiles and terminal apps are refused with `unsupported-profile`:
   they need the client or the terminal that starts them.
+- Vary one run with `--patch FILE` after the profile word, as in
+  `dshd run --bg --name task-7 -- worker --patch ./fast.yml "summarise the open issues"`;
+  the overlay is part of the recipe, every start applies it, and `get` and
+  `ls` show it in `patches`.
+- To make the overlay's content part of the instance, give it to dshd
+  before `--`: `dshd run --bg --patch ./fast.yml --name task-7 -- worker "summarise the open issues"`.
+  dshd snapshots the file (a regular file of at most 1 MiB) at creation
+  and hands `dsh` the copy at every start, after the profile and before
+  the overlays typed in the argv. Editing or deleting the file changes
+  nothing; the same name with other content is `exists-different-recipe`.
+  `get` lists the snapshots in `patches` with their `sha256`.
+- One app per profile: DSH mounts every bundle a profile lists, so a
+  profile with two apps gets a warning and the transport of the first. A
+  web instance and headless tasks of one configuration need two profiles.
 
 ## Wait for a headless task
 
@@ -140,8 +154,9 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   inconsistent. `lastRun.ending` is one of stopped, stopped-without-intent,
   exited, failed, interrupted, or null while the run is in progress.
   `resources` contains live systemd counters, or null values when unavailable.
+  `patches` lists the `run --patch` snapshots (`file`, `sha256`, `source`).
   `remedy` is the command to run next, or null.
-- `ls`: `{"instances":[{"name","state","transport","release","releaseState","enabled","since","remedy"}],"linger","warnings"}`.
+- `ls`: `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy"}],"linger","warnings"}`.
 - Mutating verbs: the status object plus `outcome` and `warnings`.
   `outcome` is one of created, started, already-running, stopped,
   already-stopped, restarted, updated, unchanged, enabled, already-enabled,

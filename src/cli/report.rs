@@ -83,6 +83,22 @@ pub struct ProfileReport {
     pub name: String,
     /// The DSH home the profile lives in.
     pub dsh_home: String,
+    /// The `--patch` overlays the recorded argv gives, in order, as typed.
+    /// DSH reads them from their paths at every start; dshd's own
+    /// snapshots are the status object's `patches`.
+    pub patches: Vec<String>,
+}
+
+/// One `run --patch` snapshot in a status object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchReport {
+    /// File name under `%S/dshd/NAME/patches/`.
+    pub file: String,
+    /// Lowercase hex sha256 of the snapshot, part of the recipe.
+    pub sha256: String,
+    /// The path it was read from at creation; never read again.
+    pub source: String,
 }
 
 /// The `web` block of a status object.
@@ -167,6 +183,10 @@ pub struct StatusReport {
     pub release: Option<ReleaseReport>,
     /// Profile block.
     pub profile: Option<ProfileReport>,
+    /// The `run --patch` overlays dshd snapshotted at creation, in the
+    /// order dsh gets them: after the profile, before the `--patch`
+    /// overlays typed in the argv (`profile.patches`).
+    pub patches: Vec<PatchReport>,
     /// Web block, for web instances.
     pub web: Option<WebReport>,
     /// Relay block, for acp instances, when the probe answered.
@@ -187,6 +207,10 @@ pub struct ListEntry {
     pub state: StateSlug,
     /// Recorded transport.
     pub transport: Option<Transport>,
+    /// Recorded profile name.
+    pub profile: Option<String>,
+    /// The `--patch` overlays of the recorded argv.
+    pub patches: Vec<String>,
     /// Release label.
     pub release: Option<String>,
     /// Release state.

@@ -50,8 +50,8 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 180;
 const SKILL: &str = include_str!("cli/skill.md");
 
 /// `dshd run [--bg] [--name N] [--release R] [--cwd D] [--label K=V]...
-/// [--timeout S] -- DSH ARGUMENTS`: create the instance, or match the
-/// stored recipe of `--name`, and start it.
+/// [--patch PATH]... [--timeout S] -- DSH ARGUMENTS`: create the instance,
+/// or match the stored recipe of `--name`, and start it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunArgs {
     /// `--name N`; default `PROFILE-K` with the lowest free K.
@@ -62,6 +62,8 @@ pub struct RunArgs {
     pub cwd: Option<PathBuf>,
     /// `--label KEY=VALUE`, repeatable. An empty value removes the key.
     pub labels: BTreeMap<String, String>,
+    /// `--patch PATH`, repeatable: overlays dshd snapshots into the instance at creation.
+    pub patches: Vec<PathBuf>,
     /// `--bg`: return once the instance runs, also for a headless task.
     pub bg: bool,
     /// `--timeout S`: how long a foreground headless run follows its task.
@@ -77,6 +79,7 @@ impl Default for RunArgs {
             release: None,
             cwd: None,
             labels: BTreeMap::new(),
+            patches: Vec::new(),
             bg: false,
             timeout: DEFAULT_TIMEOUT_SECS,
             argv: Vec::new(),
@@ -409,6 +412,44 @@ mod tests {
                 },
                 "row {index}"
             );
+        }
+    }
+
+    // catches: dshd's --patch dropped, reordered, read from dsh's argv after --, or an empty value accepted
+    #[test]
+    fn run_patch_flag_parses_repeatable_in_order() {
+        let Verb::Run(args) = parse(os(&[
+            "run",
+            "--patch",
+            "b.yml",
+            "--name",
+            "a",
+            "--patch=/etc/a.yml",
+            "--",
+            "web",
+            "--patch",
+            "c.yml",
+        ]))
+        .unwrap() else {
+            panic!("not run");
+        };
+        assert_eq!(
+            args.patches,
+            [PathBuf::from("b.yml"), PathBuf::from("/etc/a.yml")]
+        );
+        assert_eq!(args.argv, os(&["web", "--patch", "c.yml"]));
+        let Verb::Run(none) = parse(os(&["run", "--", "web"])).unwrap() else {
+            panic!("not run");
+        };
+        assert!(none.patches.is_empty());
+        for refused in [
+            &["run", "--patch", "", "--", "web"][..],
+            &["run", "--patch=", "--", "web"],
+            &["run", "--patch"],
+            &["start", "--patch", "x", "a"],
+        ] {
+            let error = parse(os(refused)).unwrap_err();
+            assert_eq!(error.kind(), "invalid-argument", "{refused:?}: {error}");
         }
     }
 

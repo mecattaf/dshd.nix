@@ -33,6 +33,9 @@ system configuration supplies `dsh`, and dshd runs the release it is given.
   you deliberately update and stop or restart it.
 - dshd only launches DSH. An instance runs its DSH profile live from its
   DSH home, with the argv as typed, and dshd writes nothing in that home.
+- `run --patch FILE` snapshots an overlay into the instance: every start
+  hands `dsh` that copy, so a changed or deleted FILE never changes an
+  instance, and the same name with other content is a different recipe.
 - Web instances keep their origin and default port across restarts;
   `attach --print-url` gives the current login token. ACP instances keep
   their sessions across controllers: a client can detach mid-turn and
@@ -45,7 +48,8 @@ system configuration supplies `dsh`, and dshd runs the release it is given.
 
 ```
 %S/dshd/NAME/
-  instance.json   the recipe (0600): id, release name, cwd, args, environment, profile, transport, labels
+  instance.json   the recipe (0600): id, release name, cwd, args, patches, environment, profile, transport, labels
+  patches/        the run --patch snapshots (0700), NN-SHA256PREFIX.yml (0600), only when given
   last-run.json   how the current or last run started and, once it ended, how it ended
   current         -> /nix/store/...-dshd-release-...   the release the next start uses (GC root)
   booted          -> /nix/store/...-dshd-release-...   the running release; current again after a stop (GC root)
@@ -61,7 +65,9 @@ instance one transport. A bundle is matched by the part of its name after
 the last `/`, so `@deepseek-ai/dsh-web-app` and `dsh-web-app` are the same;
 when a profile lists several, `dsh-headless` wins, then `dsh-web-app`, then
 `dsh-acp-app`. The transport decides how the instance becomes ready, how
-you attach to it and whether a crash restarts it.
+you attach to it and whether a crash restarts it. DSH mounts every bundle
+a profile lists, so `run` warns about a profile that lists more than one
+app; see [one configuration, several apps](#one-configuration-several-apps).
 
 | Profile (DSH bundle) | Transport | Ready when | stdin | stdout | Attach | Restart after a crash | Restrictions |
 |---|---|---|---|---|---|---|---|
@@ -289,6 +295,57 @@ instance in that home; dshd records the resolved home, sets it explicitly
 for `dsh`, and shows it in `get`. Credentials and sessions stay in the
 home and are shared live by every instance of it. There is no account
 registry, profile store or `--home` flag.
+
+**Per run.** A `run` chooses its profile and its overlays with DSH's own
+launcher flags before the app's arguments: the profile word or
+`--profile`, and any number of `--patch FILE`, as in
+`dshd run --bg --name task-7 -- worker --patch ./fast.yml "summarise the open issues"`.
+They are part of the argv, so the recipe records them: every start,
+`start --rerun` included, boots the same profile with the same overlays,
+read live at that start, and `get` and `ls` show them as `profile` and
+`patches`. The same name with another profile or another overlay is a
+different recipe, refused with `exists-different-recipe`. DSH resolves a
+relative `--patch` against the instance's working directory, and reads the
+file again at every start. dshd has no `--transport` flag.
+
+**Snapshot overlays.** `dshd run --patch FILE` (before `--`, repeatable)
+makes the overlay part of the instance instead of a path in its argv, as in
+`dshd run --bg --patch ./fast.yml --name task-7 -- worker "summarise the open issues"`.
+At creation dshd copies each FILE, a readable regular file of at most
+1 MiB (a relative FILE is yours, from the current directory), to
+`%S/dshd/NAME/patches/NN-SHA256PREFIX.yml` and records its sha256 in the
+recipe; anything else is `invalid-argument`, naming FILE. Every start,
+`restart`, `update` and `start --rerun` included, hands `dsh` the copies as
+`--patch` right after the profile, in the order given, so the `--patch`
+flags typed after the profile in DSH's arguments still win. FILE is never
+read again: deleting or editing it changes no instance. Running the same
+name again with an overlay whose content differs, or in another order, is
+`exists-different-recipe`; the same content from another path is the same
+recipe. A start refuses a copy that no longer holds the recorded content.
+`get` lists the copies as `patches` (`file`, `sha256`, `source`), beside
+`profile.patches`, the overlays typed in the argv; `rm` removes them with
+the instance. An instance made without `--patch` keeps the record it
+always had; one made with it carries the `patches` key, which an older
+dshd does not know and refuses to act on, so after a rollback such an
+instance is recreated with `dshd rm NAME` and `run`.
+
+### One configuration, several apps
+
+The app is part of the profile. DSH composes every bundle a profile's
+`package.json` lists into one tree, so a profile that lists `dsh-headless`
+and `dsh-web-app` mounts both apps in one process, and the headless layer
+turns off rows of the whole tree, `authorization` and `credentials` among
+them. `run` warns about such a profile, and dshd holds it by the first
+transport in the order above. The transport is what DSH boots, so no flag
+can choose it per run.
+
+To run one configuration both as a web instance and as headless tasks,
+give each app its own profile, listing the same other bundles and
+dependencies. Put the shared settings in a bundle of your own, any package
+whose `package.json` has `dsh.bundle.patch`, or in the home layer
+`$DSH_HOME/cordis.patch.yml`, which DSH applies to every profile of the
+home; put what varies from task to task, such as a provider or a model, in
+a `--patch` of the run, or a snapshot made by `dshd run --patch FILE`.
 
 ## Releases, update and retention
 
@@ -529,13 +586,15 @@ line, or `{"error":{"kind":KIND,"message":TEXT,"hint":COMMAND|null}}`.
 - `get` prints the status object: the unit (`state`, `activeState`,
   `subState`, `result`, `mainPid`, `restarts`, `invocationId`, `since`),
   the recipe (`transport`, `cwd`, `args`, `environmentNames`, `labels`),
-  `resources`, `release`, `profile`, `web` or `acp`, `lastRun`, `enabled`, `linger` and
-  `remedy`.
+  `resources`, `release`, `profile` (`name`, `dshHome`, and `patches`, the
+  `--patch` overlays of the argv), `patches` (the `run --patch` snapshots:
+  `file`, `sha256`, `source`), `web` or `acp`, `lastRun`, `enabled`,
+  `linger` and `remedy`.
 - A mutating verb prints the status object plus `outcome` and `warnings`;
   `run` and `wait`, once they followed a run, add `exitCode`, `signal` and
   `reason`.
 - `ls` prints one object:
-  `{"instances":[{"name","state","transport","release","releaseState","enabled","since","remedy"}],"linger":BOOL,"warnings":[...]}`.
+  `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy"}],"linger":BOOL,"warnings":[...]}`.
 - `read --json` prints `{"name","invocationId","complete","streams","lines"}`;
   `attach --json` on a web instance prints `{"origin","port","urlFile"}`,
   and `url` with `--print-url`.
@@ -585,6 +644,8 @@ one with a field it does not know rather than guess.
 - One ACP controller at a time; `--takeover` replaces it.
 - SDK and terminal profiles are refused: they need the client or the
   terminal that starts them.
+- One app per profile: DSH mounts every bundle a profile lists, so the
+  transport belongs to the profile, not to the run.
 - No terminal: dshd allocates no TTY, and a profile that needs one gets
   none.
 - ACP readiness means spawned and listening, not initialised; the first
@@ -613,13 +674,14 @@ one with a field it does not know rather than guess.
 | `clippy`, `rustfmt`, `nixfmt`, `deadnix` | lints and formatting, warnings as errors |
 | `module` | the exact rendered template, the release registry and the name grammar |
 | `hygiene` | spelling, no private paths, no unfinished markers, the licence and the attribution of adapted files |
-| `lifecycle`, `transport`, `switch`, `reboot` | NixOS VM tests of the whole lifecycle with the stub dsh |
+| `lifecycle`, `transport`, `run-patch`, `switch`, `reboot` | NixOS VM tests of the whole lifecycle with the stub dsh; `run-patch` covers the `run --patch` snapshots |
 
 `tests/stub/dsh.sh` is the one fake DSH: `DSH_STUB_MODE` selects web, ACP,
 headless or a failure mode, `DSH_STUB_PORT` the web port, `DSH_STUB_DELAY`
 a slow headless task, `DSH_STUB_BACKGROUND` a tool process that ignores
 SIGTERM, `DSH_STUB_RUN_AFTER_READY` a command run from inside the instance,
-and `DSH_STUB_LOG` where it records each invocation. Each VM check writes
+and `DSH_STUB_LOG` where it records each invocation; it prints the sha256
+of each `--patch` it receives on stderr. Each VM check writes
 one receipt line per proof to its output and fails unless every proof it
 names passed. `nix fmt` formats the Nix files. `cargo fmt`, `cargo clippy`
 and `cargo test` work with any Rust toolchain of version 1.89 or newer;

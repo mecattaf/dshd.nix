@@ -1,6 +1,6 @@
 # VM: the lifecycle of instances with the stub dsh (P1.1-P1.3, P1.5-P1.7,
 # P2.2, P2.4-P2.6, P3.4, P4.1-P4.3), the foreground run, an instance that
-# restarts itself, and a user without linger.
+# restarts itself, a run's --patch overlays, and a user without linger.
 # catches: an instance that depends on the session that started it, a
 # changed argv or environment, a second process for one name, a restart
 # policy other than the runner's exit 75, work left behind by a stop or a
@@ -302,7 +302,7 @@ pkgs.testers.runNixOSTest {
         work = machine.succeed("echo ~alice/.dsh-work").strip()
         run_bg("--name homed -- web", "web", env=f"DSH_HOME={work}")
         assert environ(child("homed"))["DSH_HOME"] == work
-        assert get("homed")["profile"] == {"name": "web", "dshHome": work}
+        assert get("homed")["profile"] == {"name": "web", "dshHome": work, "patches": []}
         made = machine.succeed(f"find {work} -mindepth 1 -printf '%P\\n' | sort").split()
         assert made == ["profiles", "profiles/web", "profiles/web/package.json"], made
         materialised = json.loads(machine.succeed(f"cat {work}/profiles/web/package.json"))
@@ -323,6 +323,22 @@ pkgs.testers.runNixOSTest {
         args = native_args(pid)
         assert args == report["args"] and "--no-open" not in args and "--port" not in args, args
         receipt("task", "P3.4")
+
+    # catches: a run's --patch overlay lost from the argv dsh gets, dropped
+    # at the next start, or missing from get and ls
+    with subtest("run-patch per-run overlay"):
+        run_bg("--name overlaid -- acp --patch ./extra.yml --patch=/etc/extra.yml", "acp")
+        overlays = ["./extra.yml", "/etc/extra.yml"]
+        want = ["acp", "--patch", "./extra.yml", "--patch=/etc/extra.yml"]
+        assert native_args(child("overlaid")) == want, native_args(child("overlaid"))
+        assert get("overlaid")["profile"]["patches"] == overlays, get("overlaid")["profile"]
+        entry = next(item for item in listing() if item["name"] == "overlaid")
+        assert (entry["profile"], entry["patches"]) == ("acp", overlays), entry
+        dshd("stop overlaid")
+        assert dshd("start overlaid")["outcome"] == "started"
+        assert native_args(child("overlaid")) == want, native_args(child("overlaid"))
+        receipt("overlaid", "run-patch")
+        dshd("stop overlaid")
 
     # catches: dshd keeping a store or log of its own beside the record,
     # including a new file or one that grows on each inspection
@@ -450,7 +466,7 @@ pkgs.testers.runNixOSTest {
 
     finish([
         "P1.1", "P1.2", "P1.3", "P1.5", "P1.6", "P1.7", "P2.2", "P2.4", "P2.5", "P2.6", "P3.4",
-        "P4.1", "P4.2", "P4.3", "linger-off", "run-interrupt", "run-output", "self-restart",
+        "P4.1", "P4.2", "P4.3", "linger-off", "run-interrupt", "run-output", "run-patch", "self-restart",
     ])
   '';
 }

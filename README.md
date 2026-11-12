@@ -258,10 +258,12 @@ recreated name is a different instance to anything that keeps references.
 Profiles are DSH's own, and dshd neither copies nor changes them.
 `dshd run -- web` runs the same `dsh web` you would type, with every token
 as typed, and DSH composes the profile at every start from what is in
-`$DSH_HOME/profiles/<p>` then: the bundles in `package.json`, then
-`cordis.patch.yml`, then any `--patch`. dshd writes nothing in the DSH
-home. What an instance keeps across starts is its release, the `dsh`
-build and the runner, until `dshd update`.
+`$DSH_HOME` then: the bundles in `profiles/<p>/package.json`, then
+`profiles/<p>/cordis.patch.yml`, then the home layer
+`$DSH_HOME/cordis.patch.yml`, which applies to every profile of the home,
+then any `--patch`. dshd writes nothing in the DSH home. What an instance
+keeps across starts is its release, the `dsh` build and the runner, until
+`dshd update`.
 
 dshd reads one thing from the profile: the bundles in its `package.json`,
 which give the instance its transport at creation. The transport is

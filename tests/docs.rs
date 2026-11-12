@@ -96,6 +96,39 @@ fn flags(text: &str) -> impl Iterator<Item = &str> {
         })
 }
 
+/// The layers DSH composes a profile from at every start, in DSH's order:
+/// the bundles in the profile's `package.json`, the profile's own patch, the
+/// home layer, which applies to every profile of the DSH home, and the
+/// `--patch` overlays of the run.
+const COMPOSITION: [&str; 4] = [
+    "package.json",
+    "cordis.patch.yml",
+    "$DSH_HOME/cordis.patch.yml",
+    "--patch",
+];
+
+// catches: a README whose composition order leaves out a layer DSH applies, or names it out of
+// DSH's order, so a reader checking an instance against its profile folder misses what overrides it
+#[test]
+fn readme_states_the_composition_order() -> TestResult {
+    let text = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))?;
+    let prose = text.replace('`', "");
+    let prose = prose.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (_, after) = prose
+        .split_once("DSH composes the profile at every start")
+        .ok_or("README.md: no sentence states the order DSH composes a profile in")?;
+    let sentence = after.split(". ").next().unwrap_or_default();
+    let mut rest = sentence;
+    for layer in COMPOSITION {
+        (_, rest) = rest.split_once(layer).ok_or_else(|| {
+            format!(
+                "README.md: the composition order does not name {layer} after the layers before it:{sentence}"
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// The `dshd` command lines of a Markdown text: `$ dshd ...` lines, and
 /// inline code spans that start with `dshd`, which are prose (`true`).
 fn examples(text: &str) -> Vec<(String, bool)> {

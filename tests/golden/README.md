@@ -166,6 +166,7 @@ end of the file, since it has no later lines to wait for. `nix-store
 | `absent` | paths under `%ROOT%` removed before the run |
 | `calls/<tool>` | the expected log of that fake; an empty file means the tool was not called |
 | `gone` | paths under `%ROOT%` that must not exist after the run |
+| `kept` | paths under `%ROOT%` that must exist before the run and be the same tree after it, as the DSH home is |
 
 Whether linger is on depends on the host, not on dshd, so it is taken out
 before the comparison: stderr lines starting `dshd: warning: linger is off`
@@ -202,6 +203,9 @@ apps. `run-patch-snapshot`, `run-patch-snapshot-different`,
 `run-patch-unreadable` and `get-snapshot` pin dshd's own `run --patch`:
 a creation with two snapshots, a changed overlay refused as another
 recipe, an overlay that cannot be read, and the `patches` of `get`.
+`run-refused-keeps-labels` and `run-masked-keeps-labels` keep the
+instance record: a `run` refused because the headless task already ran,
+or because the unit is masked, sets none of its `--label`s.
 
 `calls/systemctl-queries` optionally pins read-only calls, including their
 batching. Other tool traces are always compared; an absent expectation

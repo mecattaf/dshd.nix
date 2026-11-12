@@ -28,12 +28,18 @@ use crate::release;
 use crate::tool::Tool;
 
 /// Runs the verb. The exit code is 0, or for a foreground headless run in
-/// text form dsh's own status or 124 at the check-in.
+/// text form dsh's own status or 124 at the check-in. The labels of an
+/// existing instance are set only once it started or runs already, so a
+/// run that is refused or fails to start leaves its record as it was.
 pub(super) fn run(ctx: &Context, args: &RunArgs) -> Result<u8, Error> {
     lifecycle::require_template(ctx)?;
     let (bg, timeout) = (args.bg, args.timeout);
-    let (lock, instance, created, several_apps) = create(ctx, args)?;
+    let (lock, mut instance, created, several_apps) = create(ctx, args)?;
     let mut shown = lifecycle::bring_up(ctx, &instance, false, created)?;
+    if !created && instance::set_labels(&instance, &args.labels)? {
+        instance = instance::load_strict(&ctx.state_root, &instance.name)?;
+        shown.status.labels.clone_from(&instance.record.labels);
+    }
     drop(lock);
     shown.warnings.extend(several_apps);
     if bg || instance.record.transport != Transport::None {
@@ -77,10 +83,10 @@ fn foreground(ctx: &Context, instance: &Instance, shown: Shown, timeout: u64) ->
     Ok(concluded.exit.exit_code)
 }
 
-/// Resolves the recipe from argv and creates the instance, or matches the
-/// stored recipe of an existing one, whose labels are then set. Returns
-/// the instance lock, the instance as loaded under it, whether it was
-/// created now, and the warning for a profile that lists several apps.
+/// Resolves the recipe from argv and creates the instance with its labels,
+/// or matches the stored recipe of an existing one. Returns the instance
+/// lock, the instance as loaded under it, whether it was created now, and
+/// the warning for a profile that lists several apps.
 /// The root lock covers dsh materialising a missing profile, the name
 /// choice and the creation, never a systemctl call.
 fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool, Option<String>), Error> {
@@ -138,11 +144,8 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool, Option
         labels,
     };
     instance::create(&ctx.state_root, &ctx.nix_store, request)?;
-    let (lock, mut instance) = instance::lock_loaded(&ctx.state_root, &name)?;
+    let (lock, instance) = instance::lock_loaded(&ctx.state_root, &name)?;
     drop(root_lock);
-    if !created && instance::set_labels(&instance, &args.labels)? {
-        instance = instance::load_strict(&ctx.state_root, &name)?;
-    }
     Ok((lock, instance, created, several_apps))
 }
 

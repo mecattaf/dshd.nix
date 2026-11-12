@@ -1,0 +1,1 @@
+{"error":{"kind":"task-already-ran","message":"batch's headless task already ran; starting it again resubmits the recorded prompt","hint":"dshd start --rerun batch"}}

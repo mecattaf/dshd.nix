@@ -224,11 +224,21 @@ const DISABLE: &str = r"Usage: dshd disable [--json | --text] NAME
 
 Removes dshd@NAME from dshd.target. Stops nothing.";
 
-const RM: &str = r"Usage: dshd rm [--json | --text] NAME
+const RM: &str = r"Usage: dshd rm [--invocation ID] [--json | --text] NAME
 
 Deletes a stopped instance: its state directory and its release roots,
 which the next garbage collection may then free. The profile and DSH's own
-sessions stay.";
+sessions stay.
+
+--invocation ID removes the instance only when its last run was ID, the id
+dshd get NAME shows as invocationId or lastRun.invocationId. A unit that
+runs another invocation, or is stopped after another run or none, is
+refused with not-running, and a unit that still runs ID with
+instance-running; nothing is removed. dshd's own starts of NAME wait until
+the comparison and the removal are done.
+
+  --invocation ID  the 32 hex digits of the last run
+  --json, --text   the output format";
 
 const HELP: &str = r"Usage: dshd help [VERB]
 

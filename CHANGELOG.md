@@ -52,6 +52,12 @@
   under the same name. The comparison and the stop hold the instance
   lock, which dshd's own starts take. No record changes, and the error
   vocabulary is unchanged.
+- `rm --invocation ID` removes an instance only when its last run was ID:
+  another invocation, running or last, or none is refused with
+  `not-running`, a unit still running ID with `instance-running`, and
+  nothing is removed. The comparison and the removal hold the root and
+  instance locks. No record changes, and the error vocabulary is
+  unchanged.
 - Native accounting counters under `get.resources`, with lane history
   available directly from journald lifecycle records.
 - Labels on instances, set by `run --label` and `label`; each `ls` entry

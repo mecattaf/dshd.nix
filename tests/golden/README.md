@@ -193,7 +193,10 @@ profile.
 another invocation than the one its recorded last run names, and a stop
 that names the recorded one stops nothing and writes no stop intent; the
 other `stop-invocation-*` cases pin the stopped, already-stopped and
-refused outcomes.
+refused outcomes. The `rm-invocation*` cases are the same fence on `rm`:
+a stopped instance removed after the run named, and the refusals of
+another last run, none, a newer running invocation and the run still
+going, each removing nothing.
 `attached-elsewhere` is exercised by the real relay in
 `tests/relay/handover.rs`; release updates run in `checks/switch.nix`.
 The complete error kind/exit table is in `src/error/unit_tests.rs`.

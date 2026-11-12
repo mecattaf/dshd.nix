@@ -100,6 +100,16 @@ pub struct NameArgs {
     pub name: InstanceName,
 }
 
+/// `dshd stop [--invocation ID] NAME`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopArgs {
+    /// The instance.
+    pub name: InstanceName,
+    /// `--invocation ID`: stop only the run of this systemd invocation id,
+    /// 32 lowercase hex digits.
+    pub invocation: Option<String>,
+}
+
 /// `dshd update [-R] NAME`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateArgs {
@@ -167,8 +177,8 @@ pub enum Verb {
     Run(RunArgs),
     /// `start [--rerun] NAME`.
     Start(StartArgs),
-    /// `stop NAME`.
-    Stop(NameArgs),
+    /// `stop [--invocation ID] NAME`.
+    Stop(StopArgs),
     /// `restart NAME`.
     Restart(NameArgs),
     /// `update [-R] NAME`.

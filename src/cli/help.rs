@@ -97,11 +97,23 @@ submits the recorded prompt again; --rerun does that on purpose.
   --rerun          run a headless instance's task again
   --json, --text   the output format";
 
-const STOP: &str = r"Usage: dshd stop [--json | --text] NAME
+const STOP: &str = r"Usage: dshd stop [--invocation ID] [--json | --text] NAME
 
 Stops dshd@NAME and every process it started, tool children included. The
 recipe, the release roots and DSH's own sessions stay; dshd start NAME
-starts the instance again.";
+starts the instance again.
+
+--invocation ID stops only the run of that systemd invocation, the id
+dshd get NAME shows as invocationId or lastRun.invocationId: the unit is
+stopped while it runs ID, and already-stopped when it is stopped and its
+last run was ID. A unit on another invocation, running or last, and an
+instance that never ran are refused with not-running, and nothing is
+stopped. dshd's own starts of NAME wait until the comparison and the stop
+are done; a restart systemd makes after a crash, or a start from outside
+dshd, is not fenced.
+
+  --invocation ID  the 32 hex digits of the run to stop
+  --json, --text   the output format";
 
 const RESTART: &str = r"Usage: dshd restart [--json | --text] NAME
 
@@ -246,7 +258,7 @@ mod tests {
     use std::io;
 
     use super::*;
-    use crate::error::{RecipeDifference, StartFailure, ToolFailure, UnheldApp};
+    use crate::error::{OtherInvocation, RecipeDifference, StartFailure, ToolFailure, UnheldApp};
 
     /// The agent guide, which names the same verbs.
     const SKILL: &str = include_str!("skill.md");
@@ -289,6 +301,12 @@ mod tests {
             Error::TaskAlreadyRan(name()),
             Error::UnitMasked(name()),
             Error::NotRunning(name()),
+            Error::OtherInvocation(Box::new(OtherInvocation {
+                name: name(),
+                expected: name(),
+                found: None,
+                up: false,
+            })),
             Error::AttachedElsewhere(name()),
             Error::UnsupportedTransport {
                 name: name(),

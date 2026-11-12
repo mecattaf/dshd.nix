@@ -14,7 +14,8 @@ pub(super) const OUTPUT: [&str; 4] = ["-o", "json", "--all", "--output-fields=ME
 /// One journal entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Entry {
-    message: String,
+    /// None for an entry without a `MESSAGE`, which the text form skips.
+    message: Option<String>,
     /// journald broke the line here, at `LineMax`: the next entry goes on
     /// with it.
     broken: bool,
@@ -28,20 +29,21 @@ impl Entry {
     pub(super) fn parse(line: &[u8]) -> Self {
         let Ok(Value::Object(fields)) = serde_json::from_slice::<Value>(line) else {
             return Self {
-                message: String::from_utf8_lossy(line).into_owned(),
+                message: Some(String::from_utf8_lossy(line).into_owned()),
                 broken: false,
             };
         };
         let message = match fields.get("MESSAGE") {
-            Some(Value::String(text)) => text.clone(),
+            None => None,
+            Some(Value::String(text)) => Some(text.clone()),
             Some(Value::Array(bytes)) => {
                 let bytes: Vec<u8> = bytes
                     .iter()
                     .filter_map(|byte| byte.as_u64().and_then(|byte| u8::try_from(byte).ok()))
                     .collect();
-                String::from_utf8_lossy(&bytes).into_owned()
+                Some(String::from_utf8_lossy(&bytes).into_owned())
             }
-            _ => String::new(),
+            Some(_) => Some(String::new()),
         };
         let broken = fields.get("_LINE_BREAK").and_then(Value::as_str) == Some("line-max");
         Self { message, broken }
@@ -64,12 +66,15 @@ impl Joiner {
     /// Takes the next entry; the lines it ends, if it ends one. A message
     /// that holds newlines is as many lines as the text form prints.
     pub(super) fn push(&mut self, entry: Entry) -> Vec<String> {
+        let Some(piece) = entry.message else {
+            return Vec::new();
+        };
         let message = match self.open.take() {
             Some(mut start) => {
-                start.push_str(&entry.message);
+                start.push_str(&piece);
                 start
             }
-            None => entry.message,
+            None => piece,
         };
         if entry.broken {
             self.open = Some(message);
@@ -159,7 +164,8 @@ mod tests {
 
     // catches: a message that is not printable UTF-8 (an array of bytes in
     // JSON) lost, a newline inside one message not split as the text form
-    // does, or a line that is not JSON dropped
+    // does, an entry without a message shown as a line the text form does
+    // not print, or a line that is not JSON dropped
     #[test]
     fn bytes_newlines_and_other_lines_read_as_the_text_form() {
         let colored = entry(r#"{"MESSAGE":[27,91,49,109,104,105,255]}"#);
@@ -168,7 +174,8 @@ mod tests {
             lines([entry(r#"{"MESSAGE":"one\r\ntwo\n"}"#)]),
             ["one", "two", ""]
         );
-        assert_eq!(lines([entry(r"{}")]), [""]);
+        assert_eq!(lines([entry(r#"{"MESSAGE":""}"#)]), [""]);
+        assert!(lines([entry(r#"{"__CURSOR":"s=1"}"#)]).is_empty());
         assert_eq!(lines([entry("not json")]), ["not json"]);
     }
 }

@@ -1014,6 +1014,9 @@
             "$ref": "#/$defs/runPatch"
           }
         },
+        "stdin": {
+          "$ref": "#/$defs/runStdin"
+        },
         "environment": {
           "type": "array",
           "items": {
@@ -1246,6 +1249,23 @@
       },
       "required": [
         "file",
+        "sha256",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "runStdin": {
+      "type": "object",
+      "description": "the run --stdin snapshot in instance.json",
+      "properties": {
+        "sha256": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/osText"
+        }
+      },
+      "required": [
         "sha256",
         "source"
       ],

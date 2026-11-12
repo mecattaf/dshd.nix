@@ -13,7 +13,7 @@ use lexopt::{Arg, Parser};
 use super::render;
 use crate::cli::{
     AttachArgs, DEFAULT_TIMEOUT_SECS, LabelArgs, LsArgs, NameArgs, READ_DEFAULT_LINES, ReadArgs,
-    RunArgs, StartArgs, UpdateArgs, Verb, WaitArgs,
+    RunArgs, StartArgs, StopArgs, UpdateArgs, Verb, WaitArgs,
 };
 use crate::error::Error;
 use crate::name::InstanceName;
@@ -103,13 +103,13 @@ impl Word {
                 "--text",
             ],
             Self::Start => &["--rerun", "--json", "--text"],
+            Self::Stop => &["--invocation", "--json", "--text"],
             Self::Update => &["--restart", "--json", "--text"],
             Self::Read => &["--lines", "--follow", "--json"],
             Self::Wait => &["--timeout", "--json", "--text"],
             Self::Attach => &["--via", "--open", "--print-url", "--takeover", "--json"],
             Self::Help => &[],
-            Self::Stop
-            | Self::Restart
+            Self::Restart
             | Self::Ls
             | Self::Get
             | Self::Label
@@ -135,6 +135,7 @@ struct Raw {
     lines: Option<OsString>,
     timeout: Option<OsString>,
     via: Option<OsString>,
+    invocation: Option<OsString>,
 }
 
 impl Raw {
@@ -228,6 +229,10 @@ fn lex(head: Vec<OsString>) -> Result<Raw, Error> {
                 raw.mark("--via", true)?;
                 raw.via = Some(value(&mut parser)?);
             }
+            Arg::Long("invocation") => {
+                raw.mark("--invocation", true)?;
+                raw.invocation = Some(value(&mut parser)?);
+            }
             Arg::Long("open") => raw.mark("--open", true)?,
             Arg::Long("print-url") => raw.mark("--print-url", true)?,
             Arg::Long("takeover") => raw.mark("--takeover", true)?,
@@ -282,7 +287,10 @@ fn build(raw: Raw, tail: Option<Vec<OsString>>) -> Result<Verb, Error> {
             name: one_name(verb, rest)?,
             rerun: raw.has("--rerun"),
         })),
-        Word::Stop => named(rest).map(Verb::Stop),
+        Word::Stop => Ok(Verb::Stop(StopArgs {
+            name: one_name(verb, rest)?,
+            invocation: raw.invocation.map(invocation).transpose()?,
+        })),
         Word::Restart => named(rest).map(Verb::Restart),
         Word::Get => named(rest).map(Verb::Get),
         Word::Enable => named(rest).map(Verb::Enable),
@@ -468,6 +476,20 @@ fn seconds(value: Option<&OsStr>) -> Result<u64, Error> {
                     OsText::new(value).display()
                 ))
             }),
+    }
+}
+
+/// `--invocation ID`: a systemd invocation id, 32 hex digits as `get`
+/// prints them, kept in lowercase.
+fn invocation(value: OsString) -> Result<String, Error> {
+    match value.to_str() {
+        Some(id) if id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
+            Ok(id.to_ascii_lowercase())
+        }
+        _ => Err(Error::InvalidArgument(format!(
+            "invalid --invocation {:?}: an invocation id is 32 hex digits, as dshd get prints it",
+            OsText::new(value).display()
+        ))),
     }
 }
 

@@ -8,8 +8,8 @@
 # writes outside the instance or in the DSH home, an ending that misnames
 # who stopped it, a secret outside its 0600 record, nix needed at start,
 # Ctrl+C of a foreground run reaching the instance, output lost before the
-# exit, a self-restart that loses the instance, and linger hidden or
-# changed.
+# exit, a self-restart that loses the instance, a stop by invocation id
+# that reaches a newer run of the name, and linger hidden or changed.
 { self, pkgs }:
 let
   vm = import ./vm-node.nix { inherit self pkgs; };
@@ -303,6 +303,52 @@ pkgs.testers.runNixOSTest {
         assert consumed["memoryCurrent"] is None and consumed["tasksCurrent"] is None, consumed
         receipt("why", "P2.5")
 
+    # catches: a stop by invocation id that stops a newer run of the same
+    # name, whether systemd restarted the instance after a crash or dshd
+    # started it again, that refuses or misreports the run it names, or
+    # that leaves a stop intent behind when it stopped nothing
+    with subtest("stop-invocation"):
+        first = run_bg("--name fence -- web", "web")["invocationId"]
+        assert first and first == unit("fence", "InvocationID"), first
+        # dsh dies without a stop request: the runner exits 75, and systemd
+        # restarts the instance as a new invocation after RestartSec.
+        run(f"kill -KILL {child('fence')}")
+        machine.wait_until_succeeds(
+            alice(
+                f'test "$(systemctl --user show --property=InvocationID --value dshd@fence.service)" != {first}'
+                " && systemctl --user is-active dshd@fence.service"
+            ),
+            timeout=WAIT,
+        )
+        second = unit("fence", "InvocationID")
+
+        def refused(stale: str, held: str) -> None:
+            """A stop by `stale` stops nothing while the unit runs `held`."""
+            code, err = attempt(f"dshd stop --json --invocation {stale} fence")
+            error = json.loads(err)["error"]
+            assert code == 5 and error["kind"] == "not-running", err
+            assert error["message"] == f"fence is not running invocation {stale}: it runs {held}", err
+            assert error["hint"] == "dshd get fence", err
+            report = get("fence")
+            assert report["state"] == "running" and report["invocationId"] == held, report
+            run('test ! -e "$XDG_RUNTIME_DIR/dshd/fence/stop-intent"')
+
+        refused(first, second)
+        stopped = dshd(f"stop --invocation {second} fence")
+        assert stopped["outcome"] == "stopped", stopped
+        assert stopped["lastRun"]["invocationId"] == second, stopped
+        assert stopped["lastRun"]["ending"] == "stopped", stopped
+        again = dshd(f"stop --invocation {second.upper()} fence")
+        assert again["outcome"] == "already-stopped", again
+        code, err = attempt(f"dshd stop --json --invocation {first} fence")
+        assert code == 5 and "its last run was " + second in err, err
+        assert dshd("start fence")["outcome"] == "started"
+        third = unit("fence", "InvocationID")
+        assert third not in (first, second), third
+        refused(second, third)
+        receipt("fence", "stop-invocation")
+        assert dshd(f"stop --invocation {third} fence")["outcome"] == "stopped"
+
     # catches: DSH_HOME of the starting shell not reaching dsh or get, or a
     # profile that does not exist yet made by dshd rather than by dsh: in a
     # fresh home, only the manifest dsh materialises appears
@@ -475,6 +521,7 @@ pkgs.testers.runNixOSTest {
     finish([
         "P1.1", "P1.2", "P1.3", "P1.5", "P1.6", "P1.7", "P2.2", "P2.4", "P2.5", "P2.6", "P3.4",
         "P4.1", "P4.2", "P4.3", "linger-off", "run-interrupt", "run-output", "run-patch", "self-restart",
+        "stop-invocation",
     ])
   '';
 }

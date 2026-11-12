@@ -185,6 +185,11 @@ removed again. `rm-enabled` checks removal of autostart membership,
 `rm-inconsistent` that the remedy `get` prints for a record a newer dshd
 wrote removes it, and `tui-refused` checks an unsupported terminal
 profile.
+`stop-invocation-other` is the compare-and-stop fence: `web-1` runs
+another invocation than the one its recorded last run names, and a stop
+that names the recorded one stops nothing and writes no stop intent; the
+other `stop-invocation-*` cases pin the stopped, already-stopped and
+refused outcomes.
 `attached-elsewhere` is exercised by the real relay in
 `tests/relay/handover.rs`; release updates run in `checks/switch.nix`.
 The complete error kind/exit table is in `src/error/unit_tests.rs`.

@@ -227,7 +227,7 @@ reference for each verb.
 |---|---|---|---|
 | `run -- ARGS` | `--bg`, `--name N`, `--release R`, `--cwd D`, `--label K=V`..., `--timeout S` | `created`, `started`, `already-running`, `ended`, `still-running` | Creates the instance, or matches the stored recipe of `--name`, and starts it. Web and ACP instances, and any instance with `--bg`, are left running. A headless instance runs in the foreground until `dsh` exits or `--timeout` passes. A different recipe under an existing name is refused. |
 | `start NAME` | `--rerun` | `started`, `already-running` | Starts the instance again from its recorded recipe and its `current` release. Never creates one. A headless instance whose task ran is refused unless `--rerun` is given. |
-| `stop NAME` | | `stopped`, `already-stopped` | Stops the unit and every process it started. The recipe, the release roots and DSH's sessions stay. |
+| `stop NAME` | `--invocation ID` | `stopped`, `already-stopped` | Stops the unit and every process it started. The recipe, the release roots and DSH's sessions stay. With `--invocation ID`, only the run of that invocation: any other is refused with `not-running`. |
 | `restart NAME` | | `restarted` | Clears a failed state, restarts on the `current` release and waits until the instance runs. Refused for headless instances. |
 | `update NAME` | `-R` | `updated`, `unchanged` | Points `current` at what the recorded release name resolves to now and prints `nix store diff-closures` between the two releases; `-R` also restarts a running web or ACP instance. Refused for an instance created from a store path. |
 | `ls` | | | Every instance: `NAME: state(release)`, with the command to run when one is needed. |
@@ -429,6 +429,23 @@ the instance, tool children started with `nohup` or `&` included: nothing
 a session started survives it. The last run's `ending` says who stopped
 it: `stopped` when dshd did, `stopped-without-intent` for `systemctl
 stop`, a logout without linger or a shutdown.
+
+**Stopping one run.** A name outlives its runs: `start`, `start --rerun`,
+a restart after a crash or a switch can put a newer invocation under it.
+A supervisor that keeps the id of the run it started stops that run, and
+never a newer one, with `dshd stop --invocation ID NAME`. ID is the
+`invocationId` that `run --json`, `get` and `wait` print, or
+`lastRun.invocationId` once the manager has unloaded an ended unit. The
+unit is stopped only while it runs ID, and a stopped instance whose last
+run was ID is `already-stopped`. Another invocation, running or last, and
+an instance that never ran are refused with `not-running` (exit 5), and
+nothing is stopped; `dshd get NAME` shows what runs instead. The
+comparison and the stop hold the instance lock, so `run`, `start`,
+`restart` and `update -R` of the name wait for both. systemd has no
+conditional stop, so the fence is compare, then stop: a restart systemd
+makes on its own after `RestartSec`, or a start from outside dshd
+(`systemctl --user start`, `dshd.target`), takes no lock. After `stopped`,
+`lastRun.invocationId` names the run that ended.
 
 **Restart policy.** The template says `Restart=no` and
 `RestartForceExitStatus=75`. The runner exits 75 only when a web or ACP
@@ -667,6 +684,8 @@ one with a field it does not know rather than guess.
   explicit `start --rerun`.
 - `stop`, `restart` or `update -R` run from inside an instance end the
   caller with it; check the result from outside.
+- `stop --invocation` fences only dshd's own starts; systemd's restart
+  after a crash and starts from outside dshd are not held off.
 - No daemon: every command reads the state directory and the user manager
   again, so nothing restarts a lost controller, and nothing needs to.
 - No account registry and no declared instances: accounts are DSH homes,

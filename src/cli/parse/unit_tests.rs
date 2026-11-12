@@ -88,7 +88,13 @@ fn lifecycle_arguments_parse() {
         })
     );
     let one = |n: &str| NameArgs { name: name(n) };
-    assert_eq!(verb(&["stop", "a"]), Verb::Stop(one("a")));
+    assert_eq!(
+        verb(&["stop", "a"]),
+        Verb::Stop(StopArgs {
+            name: name("a"),
+            invocation: None
+        })
+    );
     assert_eq!(verb(&["restart", "a"]), Verb::Restart(one("a")));
     assert_eq!(verb(&["get", "a"]), Verb::Get(one("a")));
     assert_eq!(verb(&["enable", "a"]), Verb::Enable(one("a")));
@@ -210,6 +216,53 @@ fn dsh_argv_is_verbatim() {
             ..RunArgs::default()
         })
     );
+}
+
+// catches: an invocation id not kept as the 32 lowercase hex digits get prints, one that is not
+// an id accepted, or --invocation taken by a verb other than stop
+#[test]
+fn stop_invocation_parses() {
+    let id = "0123456789abcdef0123456789abcdef";
+    let fenced = Verb::Stop(StopArgs {
+        name: name("a"),
+        invocation: Some(id.into()),
+    });
+    assert_eq!(verb(&["stop", "--invocation", id, "a"]), fenced);
+    let upper = format!("--invocation={}", id.to_ascii_uppercase());
+    assert_eq!(verb(&["stop", &upper, "--json", "a"]), fenced);
+    let short = "0123456789abcdef0123456789abcde";
+    let long = format!("{id}0");
+    let dashed = "01234567-89ab-cdef-0123-456789abcdef";
+    for bad in ["", "z123456789abcdef0123456789abcdef", short, &long, dashed] {
+        assert_eq!(
+            kind(&["stop", "--invocation", bad, "a"]),
+            "invalid-argument",
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        parse(os(&["stop", "--invocation=", "a"]))
+            .unwrap_err()
+            .to_string(),
+        "invalid --invocation \"\": an invocation id is 32 hex digits, as dshd get prints it"
+    );
+    assert_eq!(
+        exit(&["stop", "--invocation", id, "--invocation", id, "a"]),
+        2
+    );
+    assert_eq!(
+        exit(&["stop", "--invocation", "a"]),
+        2,
+        "the NAME is taken as the id"
+    );
+    for other in ["restart", "start", "rm", "get"] {
+        assert_eq!(
+            parse(os(&[other, "--invocation", id, "a"]))
+                .unwrap_err()
+                .to_string(),
+            format!("{other} does not take --invocation")
+        );
+    }
 }
 
 // catches: a bad flag, a flag on the wrong verb or a stray word accepted instead of exit 2

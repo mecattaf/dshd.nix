@@ -23,6 +23,12 @@
 - Each run records how it ended (`stopped`, `stopped-without-intent`,
   `exited`, `failed`, `interrupted`), from the stop intent dshd writes
   before it stops an instance; a unit the user masked shows as `masked`.
+- `stop --invocation ID` stops only the run of that systemd invocation: a
+  unit on another invocation, running or last, is refused with
+  `not-running` and left as it is, so a supervisor never stops a newer run
+  under the same name. The comparison and the stop hold the instance
+  lock, which dshd's own starts take. No record changes, and the error
+  vocabulary is unchanged.
 - Native accounting counters under `get.resources`, with lane history
   available directly from journald lifecycle records.
 - Labels on instances, set by `run --label` and `label`; each `ls` entry

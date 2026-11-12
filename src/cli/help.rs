@@ -134,14 +134,17 @@ const GET: &str = r"Usage: dshd get [--json | --text] NAME
 The unit, the recorded recipe and profile, the release links, the web
 address or the ACP relay, how the last run ended, and whether linger is on.";
 
-const READ: &str = r#"Usage: dshd read [-n LINES] [-f] [--json] NAME
+const READ: &str = r#"Usage: dshd read [-n LINES | --head LINES] [-f] [--json] NAME
 
 Prints the journal of the instance's current run, or of its last one, as
-dsh wrote it. When the lines do not reach back to the start of the run, a
-note on stderr says so. The journal of an acp instance holds dsh's stderr
-only: its stdout is the ACP channel.
+dsh wrote it: its newest lines, or with --head its first ones. When the
+lines are not the whole run, because they do not reach back to its start
+or newer lines follow them, a note on stderr says so and complete is
+false. The journal of an acp instance holds dsh's stderr only: its stdout
+is the ACP channel.
 
-  -n, --lines LINES   lines to show; default 200
+  -n, --lines LINES   newest lines to show; default 200
+  --head LINES        the oldest LINES lines instead, from the run's start
   -f, --follow        keep printing new lines until the run ends
   --json              {"name","invocationId","complete","streams","lines"}"#;
 

@@ -121,6 +121,7 @@ fn read_wait_attach_arguments_parse() {
         Verb::Read(ReadArgs {
             name: name("a"),
             lines: READ_DEFAULT_LINES,
+            head: false,
             follow: false
         })
     );
@@ -129,6 +130,7 @@ fn read_wait_attach_arguments_parse() {
         Verb::Read(ReadArgs {
             name: name("a"),
             lines: 5,
+            head: false,
             follow: true
         })
     );
@@ -137,6 +139,7 @@ fn read_wait_attach_arguments_parse() {
         Verb::Read(ReadArgs {
             name: name("a"),
             lines: 7,
+            head: false,
             follow: false
         })
     );
@@ -210,6 +213,54 @@ fn dsh_argv_is_verbatim() {
             ..RunArgs::default()
         })
     );
+}
+
+// catches: --head read as the newest lines, combined with -n or --follow, or
+// taken by a verb other than read
+#[test]
+fn read_head_parses() {
+    assert_eq!(
+        verb(&["read", "--head", "50", "a"]),
+        Verb::Read(ReadArgs {
+            name: name("a"),
+            lines: 50,
+            head: true,
+            follow: false
+        })
+    );
+    assert_eq!(
+        verb(&["read", "--json", "--head=0", "a"]),
+        Verb::Read(ReadArgs {
+            name: name("a"),
+            lines: 0,
+            head: true,
+            follow: false
+        })
+    );
+    for (args, message) in [
+        (
+            &["read", "--head", "5", "-n", "5", "a"][..],
+            "-n and --head exclude each other",
+        ),
+        (
+            &["read", "-f", "--head", "5", "a"],
+            "--head and --follow exclude each other",
+        ),
+        (
+            &["read", "--head", "first", "a"],
+            "--head takes a number of lines, not first",
+        ),
+        (
+            &["read", "--head", "1", "--head", "2", "a"],
+            "--head given twice",
+        ),
+        (&["get", "--head", "5", "a"], "get does not take --head"),
+    ] {
+        let error = parse(os(args)).unwrap_err();
+        assert_eq!(error.kind(), "invalid-argument", "{args:?}");
+        assert_eq!(error.to_string(), message, "{args:?}");
+    }
+    assert_eq!(exit(&["read", "--head", "a"]), 2);
 }
 
 // catches: a bad flag, a flag on the wrong verb or a stray word accepted instead of exit 2

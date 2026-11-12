@@ -26,6 +26,8 @@
 - Native accounting counters under `get.resources`, with lane history
   available directly from journald lifecycle records.
 - Labels on instances, set by `run --label` and `label`.
+- `run` refuses a `--patch` launcher flag with an empty value, which every
+  start of the instance would fail on.
 - `dshd-run`, the per-release runner: spawns `dsh` with the recorded argv,
   working directory and environment, reports readiness to systemd, keeps a
   web instance's origin and default port, and relays an ACP instance's stdio to one

@@ -106,6 +106,16 @@ pub(super) fn status_page(report: &StatusReport) -> String {
     }
     if let Some(run) = &report.last_run {
         page.field("last run", &last_run_text(run));
+        if let Some(consumed) = &run.resources {
+            for (name, value) in [
+                ("last run cpu ns", consumed.cpu_usage_nsec),
+                ("last run memory peak bytes", consumed.memory_peak),
+                ("last run io read bytes", consumed.io_read_bytes),
+                ("last run io write bytes", consumed.io_write_bytes),
+            ] {
+                page.optional(name, value);
+            }
+        }
     }
     page.0.join("\n")
 }
@@ -132,6 +142,7 @@ pub(super) fn entry_of(report: &StatusReport) -> ListEntry {
         enabled: report.enabled,
         since: report.since,
         remedy: report.remedy.clone(),
+        labels: report.labels.clone(),
     }
 }
 
@@ -320,6 +331,7 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 mod tests {
     use super::*;
     use crate::record::Transport;
+    use std::collections::BTreeMap;
 
     /// `text` without colour escapes, whatever the test's stdout is.
     fn plain(text: &str) -> String {
@@ -348,6 +360,7 @@ mod tests {
             enabled: false,
             since: None,
             remedy: remedy.map(str::to_owned),
+            labels: BTreeMap::new(),
         }
     }
 
@@ -399,6 +412,7 @@ mod tests {
             exit_code: None,
             exit_status: None,
             child: None,
+            resources: None,
             this_boot: true,
         };
         assert_eq!(

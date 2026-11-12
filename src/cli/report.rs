@@ -132,6 +132,11 @@ pub struct LastRunReport {
     pub exit_status: Option<String>,
     /// The `dsh` child's own end.
     pub child: Option<ChildEnd>,
+    /// What the run consumed, recorded at its end; the counters of
+    /// `resources` that describe a moment, `memoryCurrent` and
+    /// `tasksCurrent`, are always null here. Null until the end is
+    /// recorded, and for an end an older dshd recorded.
+    pub resources: Option<crate::systemctl::Resources>,
     /// The run happened under the current boot.
     pub this_boot: bool,
 }
@@ -159,11 +164,15 @@ pub struct StatusReport {
     pub main_pid: Option<u32>,
     /// `NRestarts`.
     pub restarts: u32,
-    /// Native resource counters, null where accounting is unavailable.
+    /// Native resource counters, null where accounting is unavailable or
+    /// the manager no longer holds the unit.
     pub resources: crate::systemctl::Resources,
-    /// Current `InvocationID`, while running.
+    /// The manager's `InvocationID`: the run in progress, or the last one
+    /// while the manager still holds the unit. Null once it unloaded an
+    /// ended unit; `lastRun.invocationId` still names that run.
     pub invocation_id: Option<String>,
-    /// Unix seconds the unit entered its current state.
+    /// Unix seconds the unit entered its current state; for an ended unit
+    /// the manager no longer holds, when its last run ended.
     pub since: Option<u64>,
     /// `enabled`: wanted by `dshd.target`.
     pub enabled: bool,
@@ -221,6 +230,8 @@ pub struct ListEntry {
     pub since: Option<u64>,
     /// Remedy command, when an action is needed.
     pub remedy: Option<String>,
+    /// Labels, as the status object has them.
+    pub labels: BTreeMap<String, String>,
 }
 
 /// `ls`: every instance, one object.

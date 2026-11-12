@@ -149,8 +149,8 @@ pub fn selected_profile(argv: &[OsString]) -> Result<String, Error> {
 ///
 /// Refuses (invalid-argument) what cannot be a held session: no profile,
 /// a profile selected twice, the word `plugin`, a profile that is not one
-/// directory name, `--from-default-profile`, and the flags that print and
-/// exit (`--dump-*`, `-V`, `--version`).
+/// directory name, a `--patch` without a file, `--from-default-profile`,
+/// and the flags that print and exit (`--dump-*`, `-V`, `--version`).
 pub fn selection(argv: &[OsString]) -> Result<Selection, Error> {
     let mut profile = None;
     let mut patches = Vec::new();
@@ -183,6 +183,9 @@ pub fn selection(argv: &[OsString]) -> Result<Selection, Error> {
                 .ok_or_else(|| refuse(format!("{flag} needs a value")))?
                 .as_os_str()
         };
+        if flag == PATCH_FLAG && value.is_empty() {
+            return Err(refuse(format!("{flag} needs a file")));
+        }
         if flag == PROFILE_FLAG {
             if profile.is_some() {
                 return Err(refuse("the profile is selected twice".to_owned()));

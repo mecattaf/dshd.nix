@@ -515,6 +515,17 @@ systemd.services."user@".serviceConfig.Delegate = "pids memory cpu io";
 Without either, IO counts may be `null` while CPU, memory and tasks stay
 available. dshd changes neither setting.
 
+The manager forgets an ended unit that nothing references, a headless
+instance's above all: once it unloads the unit, `resources` is all `null`
+and the top-level `invocationId` is `null`, while `lastRun.invocationId`
+still names the run and `since` falls back to `lastRun.endedAt`. The run's
+own totals stay in `lastRun.resources`, the same object with
+`memoryCurrent` and `tasksCurrent` always `null`: `dshd-run poststop`
+reads `cpu.stat`, `memory.peak` and `io.stat` of the unit's cgroup, where
+systemd starts it once every process of the run is gone, and records them
+with the run's end. They are `null` where the controller is off, and
+`lastRun.resources` is `null` for an end an older dshd recorded.
+
 Journald already holds an instance's lane history. Read it directly:
 
 ```sh
@@ -540,7 +551,8 @@ debug level, which a user manager at the default `LogLevel=info` does not
 write.
 
 Use `-u 'dshd@*.service'` for all instance lanes. `dshd read NAME` gives one
-run's output. dshd keeps no timeline store or resource projection.
+run's output. dshd keeps no timeline store or resource projection; the
+totals in `lastRun.resources` are the last run's only.
 
 ## Coexistence and migration
 
@@ -594,7 +606,8 @@ line, or `{"error":{"kind":KIND,"message":TEXT,"hint":COMMAND|null}}`.
   `run` and `wait`, once they followed a run, add `exitCode`, `signal` and
   `reason`.
 - `ls` prints one object:
-  `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy"}],"linger":BOOL,"warnings":[...]}`.
+  `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy","labels"}],"linger":BOOL,"warnings":[...]}`,
+  so a supervisor can match its instances by label with one call.
 - `read --json` prints `{"name","invocationId","complete","streams","lines"}`;
   `attach --json` on a web instance prints `{"origin","port","urlFile"}`,
   and `url` with `--print-url`.

@@ -25,7 +25,8 @@
   before it stops an instance; a unit the user masked shows as `masked`.
 - Native accounting counters under `get.resources`, with lane history
   available directly from journald lifecycle records.
-- Labels on instances, set by `run --label` and `label`.
+- Labels on instances, set by `run --label` and `label`; each `ls` entry
+  shows them.
 - A run's own profile and overlays: the `--patch` flags DSH's launcher
   takes before the app's arguments are part of the recorded argv, so every
   start applies them, a different overlay under an existing name is
@@ -40,6 +41,12 @@
   without `--patch` keep their record byte for byte.
 - `run` warns about a profile that lists more than one app bundle, since
   DSH mounts every bundle a profile lists in one process.
+- An ended run keeps its totals: `poststop` records the CPU time, peak
+  memory and IO bytes of the unit's cgroup in `last-run.json`, and the
+  status object shows them as `lastRun.resources`. Once the manager
+  unloads an ended unit, `since` falls back to `lastRun.endedAt`.
+- `run` refuses a `--patch` launcher flag with an empty value, which every
+  start of the instance would fail on.
 - `dshd-run`, the per-release runner: spawns `dsh` with the recorded argv,
   working directory and environment, reports readiness to systemd, keeps a
   web instance's origin and default port, and relays an ACP instance's stdio to one

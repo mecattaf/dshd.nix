@@ -125,7 +125,8 @@ fn selection_keeps_the_patch_overlays_in_order() -> Result<(), Error> {
 }
 
 // catches: an argv accepted that would manage plugins, recreate the profile at every start, print and exit, select two
-// profiles, or name a profile outside the DSH home's profiles directory (P1.2)
+// profiles, name a profile outside the DSH home's profiles directory (P1.2), or hand dsh an empty `--patch` that every
+// start then fails on
 #[test]
 fn selection_refusals() -> Result<(), Error> {
     let refused: &[&[&str]] = &[
@@ -143,6 +144,9 @@ fn selection_refusals() -> Result<(), Error> {
         &["web", "--version"],
         &["--profile"],
         &["web", "--patch"],
+        &["web", "--patch="],
+        &["web", "--patch", ""],
+        &["--patch=", "--profile", "web"],
         &["--profile="],
         &["."],
         &[".."],

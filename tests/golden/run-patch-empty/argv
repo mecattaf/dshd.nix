@@ -1,0 +1,10 @@
+run
+--text
+--name
+emptied
+--release
+%RELEASE%
+--
+headless
+--patch=
+say hi

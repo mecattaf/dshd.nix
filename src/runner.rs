@@ -4,7 +4,7 @@
 //! with pipes, reports readiness over `sd_notify`, supervises the
 //! child on its main thread (stop signals and reaping, see `signal`) and
 //! picks one exit status. `poststop` completes `last-run.json` from what
-//! systemd hands `ExecStopPost`.
+//! systemd hands `ExecStopPost` and the totals of the unit's cgroup.
 //!
 //! The unit's working directory is the instance directory and systemd
 //! names the runtime directory in `$RUNTIME_DIRECTORY`; the runner derives
@@ -14,6 +14,7 @@
 //! `stop-intent`. Every line of a run in the journal comes after
 //! `RUN_STARTED`; the last one is `poststop`'s `RUN_ENDED`.
 
+mod cgroup;
 mod completion;
 
 pub mod exit;
@@ -97,7 +98,8 @@ pub fn run(name: &str) -> u8 {
 
 /// `dshd-run poststop NAME`: completes `last-run.json` from
 /// `$SERVICE_RESULT`, `$EXIT_CODE`, `$EXIT_STATUS`, the child's end the
-/// runner left and the CLI's stop intent, clears the per-run files, then
+/// runner left, the CLI's stop intent and the run's cgroup totals, clears
+/// the per-run files, then
 /// logs [`RUN_ENDED`]. Exits non-zero when the run cannot be recorded.
 #[must_use]
 pub fn poststop(name: &str) -> u8 {

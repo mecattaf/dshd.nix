@@ -26,7 +26,7 @@ use crate::record::{LastRun, OsText, Transport};
 use crate::relay::{self, protocol::ProbeLine};
 use crate::release::{self, ReleaseState};
 use crate::runner::web;
-use crate::systemctl::{self, ActiveState, LoadState, Task, UnitFacts, UnitResult};
+use crate::systemctl::{self, ActiveState, LoadState, Resources, Task, UnitFacts, UnitResult};
 use crate::tool::Tool;
 
 /// A report and what only the human page adds to it.
@@ -186,6 +186,9 @@ pub(super) fn gather(
     report.remedy = remedy;
     report.release = release.map(|(release, _)| release);
     report.last_run = last_run.map(|run| last_run_report(run, boot, unit_up(facts)));
+    if report.since.is_none() && ended(state) {
+        report.since = report.last_run.as_ref().and_then(|run| run.ended_at);
+    }
     let mut probe_failure = None;
     if let Some(instance) = &instance {
         fill_recipe(&mut report, instance);
@@ -408,6 +411,16 @@ fn bare_report(
     }
 }
 
+/// A state the unit is in because its last run ended. Once the manager
+/// unloads such a unit it reports no timestamps, and the recorded end of
+/// the run is when it entered that state.
+fn ended(state: StateSlug) -> bool {
+    matches!(
+        state,
+        StateSlug::Stopped | StateSlug::Failed | StateSlug::PreviousBoot
+    )
+}
+
 /// When the unit entered the state it is in.
 fn since(facts: &UnitFacts) -> Option<u64> {
     match facts.active_state {
@@ -548,6 +561,7 @@ fn last_run_report(run: LastRun, boot: &str, up: bool) -> LastRunReport {
         exit_code: None,
         exit_status: None,
         child: None,
+        resources: None,
         this_boot,
     };
     if let Some(end) = end {
@@ -556,6 +570,14 @@ fn last_run_report(run: LastRun, boot: &str, up: bool) -> LastRunReport {
         report.exit_code = Some(end.exit_code);
         report.exit_status = Some(end.exit_status);
         report.child = end.child;
+        report.resources = end.resources.map(|consumed| Resources {
+            cpu_usage_nsec: consumed.cpu_usage_nsec,
+            memory_current: None,
+            memory_peak: consumed.memory_peak,
+            tasks_current: None,
+            io_read_bytes: consumed.io_read_bytes,
+            io_write_bytes: consumed.io_write_bytes,
+        });
     }
     report
 }

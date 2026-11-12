@@ -1,0 +1,12 @@
+run
+--text
+--bg
+--name
+long
+--release
+%RELEASE%
+--stdin
+./brief.md
+--
+headless
+-

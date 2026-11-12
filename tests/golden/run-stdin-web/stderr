@@ -1,0 +1,1 @@
+{"error":{"kind":"invalid-argument","message":"--stdin is the stdin of a headless dsh, and profile web selects transport web; give its input another way, or run a headless profile","hint":"dshd help"}}

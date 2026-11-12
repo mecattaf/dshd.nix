@@ -78,6 +78,8 @@ $ dshd read batch
   and print an outcome `ended` or `still-running` with `exitCode`, `signal`
   and `reason`. Branch on `outcome` and `exitCode`, not on the process
   status; `read` has the output.
+- `wait` reads only what the run writes while it waits, so a loop of
+  `wait --timeout S` calls never reads the run again.
 
 ## Read what a session printed
 

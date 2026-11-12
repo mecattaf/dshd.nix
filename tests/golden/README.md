@@ -150,10 +150,11 @@ empty. With `-o json` it prints one entry per line: the journal's `.json`
 sibling when there is one, as `read-long-line` uses for a line journald
 broke at `LineMax`, else `{"MESSAGE":"LINE"}` for each line, and `-n`
 counts entries. `-n +K` prints the oldest K lines and `-n K` the newest
-K. `-f` with `--no-tail` prints the whole journal and with `-n 0` none of it,
-stopping after the runner's last line (`dshd-run: run ended`) or at the
-end of the file, since it has no later lines to wait for. `nix-store
---option substitute false --realise PATH --add-root LINK` points `LINK` at
+K. `-f` with `--no-tail` prints the whole journal and with `-n 0` none of
+it, then, when the case's `env` sets `FAKE_FOLLOW_END=1`, the runner's
+last line (`dshd-run: run ended: success`), and waits at that end, as a
+live follower does, until dshd kills it. `nix-store --option substitute
+false --realise PATH --add-root LINK` points `LINK` at
 `PATH` and prints `LINK`. `xdg-open` only logs.
 
 ## A case
@@ -212,6 +213,11 @@ recipe, an overlay that cannot be read, and the `patches` of `get`.
 `run-refused-keeps-labels` and `run-masked-keeps-labels` keep the
 instance record: a `run` refused because the headless task already ran,
 or because the unit is masked, sets none of its `--label`s.
+`wait-follows-from-now` pins that `wait` follows only the lines written
+from now (`-n 0`), never the whole run again, and `wait-end-before-follow`
+that such a follower still finds an end recorded before it started
+reading, by looking while its journal is silent, instead of waiting out
+its `--timeout`.
 
 `calls/systemctl-queries` optionally pins read-only calls, including their
 batching. Other tool traces are always compared; an absent expectation

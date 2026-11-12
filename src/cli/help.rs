@@ -184,7 +184,8 @@ Waits until the instance's current run ends, then exits as dsh did: with its
 own exit code, or 128+S when signal S ended it. A run that ended already is
 reported at once. At --timeout wait exits 124 and the instance continues.
 As JSON it exits 0, with the outcome ended or still-running and the fields
-exitCode, signal and reason.
+exitCode, signal and reason. wait reads only the journal lines written while
+it waits, so waiting in slices never reads the run again.
 
   --timeout SECONDS   how long to wait; default 180
   --json, --text      the output format";

@@ -218,6 +218,9 @@ A foreground headless `run` prints DSH's output until `dsh` exits and
 exits as it did. Ctrl+C ends the command, not the task; at `--timeout`
 (180 seconds by default) `run` exits 124 and the task continues.
 `dshd wait NAME` picks it up and `dshd read NAME` prints what it wrote.
+`wait`, and `run --json`, print nothing of the run and read only the
+journal lines written while they wait, so waiting in slices of
+`--timeout` never reads the run again.
 
 ## Verb reference
 

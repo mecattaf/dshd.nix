@@ -265,6 +265,12 @@
             "string",
             "null"
           ]
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -275,7 +281,8 @@
         "releaseState",
         "enabled",
         "since",
-        "remedy"
+        "remedy",
+        "labels"
       ],
       "additionalProperties": false
     },

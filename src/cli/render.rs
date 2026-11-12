@@ -130,6 +130,7 @@ impl Page {
     fn field(&mut self, key: &str, value: &dyn Display) {
         self.0.push(format!("  {key}: {value}"));
     }
+        labels: report.labels.clone(),
 
     fn optional<T: Display>(&mut self, key: &str, value: Option<T>) {
         if let Some(value) = value {
@@ -313,6 +314,7 @@ mod tests {
                 (false, '\x1b') => escaped = true,
                 (false, _) => kept.push(c),
                 (true, 'm') => escaped = false,
+    use std::collections::BTreeMap;
                 (true, _) => {}
             }
         }
@@ -339,6 +341,7 @@ mod tests {
             plain(&line(&entry(StateSlug::Running, "current", None))),
             "web-1: running(dsh-0.2.2-rc.1)"
         );
+            labels: BTreeMap::new(),
         assert_eq!(
             plain(&line(&entry(
                 StateSlug::Stopped,

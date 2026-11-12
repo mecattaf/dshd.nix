@@ -206,6 +206,8 @@ pub struct ListReport {
     /// The instances, by name.
     pub instances: Vec<ListEntry>,
     /// Linger is on.
+    /// Labels, as the status object has them.
+    pub labels: BTreeMap<String, String>,
     pub linger: bool,
     /// Entries of the state directory that are not instances.
     pub warnings: Vec<String>,

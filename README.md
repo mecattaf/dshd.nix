@@ -535,7 +535,8 @@ line, or `{"error":{"kind":KIND,"message":TEXT,"hint":COMMAND|null}}`.
   `run` and `wait`, once they followed a run, add `exitCode`, `signal` and
   `reason`.
 - `ls` prints one object:
-  `{"instances":[{"name","state","transport","release","releaseState","enabled","since","remedy"}],"linger":BOOL,"warnings":[...]}`.
+  `{"instances":[{"name","state","transport","release","releaseState","enabled","since","remedy","labels"}],"linger":BOOL,"warnings":[...]}`,
+  so a supervisor can match its instances by label with one call.
 - `read --json` prints `{"name","invocationId","complete","streams","lines"}`;
   `attach --json` on a web instance prints `{"origin","port","urlFile"}`,
   and `url` with `--print-url`.

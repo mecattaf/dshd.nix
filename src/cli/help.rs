@@ -66,7 +66,9 @@ restarted.
 
 --patch FILE copies FILE into the instance at creation; every start hands
 dsh that copy with --patch right after the profile, before the --patch
-flags in DSH ARGUMENTS, and FILE is never read again.
+flags in DSH ARGUMENTS, and FILE is never read again. A relative FILE is
+read from the current directory, not from --cwd; dsh resolves a --patch in
+DSH ARGUMENTS against --cwd.
 
 dsh runs the profile as it is in its DSH home at every start. dshd only
 reads the profile's bundles, which fix the transport at creation; a shipped
@@ -296,6 +298,10 @@ mod tests {
                 candidates: None,
             },
             Error::CreateWithRun(name()),
+            Error::PatchUnreadable {
+                path: name(),
+                reason: name(),
+            },
             Error::PathPinned(name()),
             Error::NotFound(name()),
             Error::ReleaseNotFound(name()),

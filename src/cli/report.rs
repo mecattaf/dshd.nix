@@ -218,8 +218,9 @@ pub struct ListEntry {
     pub transport: Option<Transport>,
     /// Recorded profile name.
     pub profile: Option<String>,
-    /// The `--patch` overlays of the recorded argv.
-    pub patches: Vec<String>,
+    /// The `--patch` overlays of the recorded argv, the status object's
+    /// `profile.patches`.
+    pub profile_patches: Vec<String>,
     /// Release label.
     pub release: Option<String>,
     /// Release state.

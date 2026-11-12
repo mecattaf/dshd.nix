@@ -387,7 +387,7 @@ pkgs.testers.runNixOSTest {
         assert native_args(child("overlaid")) == want, native_args(child("overlaid"))
         assert get("overlaid")["profile"]["patches"] == overlays, get("overlaid")["profile"]
         entry = next(item for item in listing() if item["name"] == "overlaid")
-        assert (entry["profile"], entry["patches"]) == ("acp", overlays), entry
+        assert (entry["profile"], entry["profilePatches"]) == ("acp", overlays), entry
         dshd("stop overlaid")
         assert dshd("start overlaid")["outcome"] == "started"
         assert native_args(child("overlaid")) == want, native_args(child("overlaid"))

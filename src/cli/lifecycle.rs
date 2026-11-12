@@ -108,11 +108,17 @@ pub(super) fn stop(ctx: &Context, args: &StopArgs) -> Result<(), Error> {
 
 /// The instance lock, when the instance has a directory to hold it. A
 /// unit the manager holds without one has no lock, and nothing of dshd's
-/// can start it.
+/// can start it. A directory removed while waiting for the lock (`rm`
+/// held it) is `NotFound`, as [`instance::lock_loaded`] reports it.
 fn lock_if_present(ctx: &Context, name: &InstanceName) -> Result<Option<Lock>, Error> {
     let dir = ctx.state_root.instance(name);
     match fsx::kind(dir.path())? {
-        Some(_) => instance::lock(&dir).map(Some),
+        Some(_) => match instance::lock(&dir) {
+            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+                Err(Error::NotFound(name.to_string()))
+            }
+            taken => taken.map(Some),
+        },
         None => Ok(None),
     }
 }

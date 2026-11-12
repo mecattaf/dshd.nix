@@ -247,7 +247,7 @@
             "null"
           ]
         },
-        "patches": {
+        "profilePatches": {
           "type": "array",
           "items": {
             "type": "string"
@@ -297,7 +297,7 @@
         "state",
         "transport",
         "profile",
-        "patches",
+        "profilePatches",
         "release",
         "releaseState",
         "enabled",

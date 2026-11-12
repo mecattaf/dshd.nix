@@ -103,10 +103,12 @@ fn oldest(ctx: &Context, id: &str, count: u32) -> Result<Window, Error> {
     let mut lines = capture(ctx, id, &format!("+{ask}"))?;
     let shown = usize::try_from(count).unwrap_or(usize::MAX);
     let newer = lines.len() > shown;
-    lines.truncate(shown);
+    // Before the cut, so an empty window (`--head 0`) still says whether
+    // it begins at the run's first line.
     let from_start = lines
         .first()
         .is_some_and(|line| line.starts_with(RUN_STARTED));
+    lines.truncate(shown);
     Ok(Window {
         lines,
         from_start,

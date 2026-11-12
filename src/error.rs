@@ -269,9 +269,7 @@ impl Error {
             Self::InvalidArgument(_) => Some("dshd help".into()),
             Self::NeedsTarget { .. } | Self::NotFound(_) => Some("dshd ls".into()),
             Self::CreateWithRun(argv) => Some(format!("dshd run --bg -- {argv}")),
-            Self::PatchUnreadable { path, .. } => Some(format!(
-                "--patch takes a readable regular file of at most 1 MiB; check {path}"
-            )),
+            Self::PatchUnreadable { .. } => Some("dshd help run".into()),
             Self::ReleaseNotFound(_) => Some("ls /etc/dshd/releases".into()),
             Self::PathPinned(name) | Self::InconsistentState { name, .. } => Some(format!("dshd rm {name}")),
             Self::ExistsDifferentRecipe(diff) => Some(format!("dshd rm {}", diff.name)),

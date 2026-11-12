@@ -225,7 +225,7 @@ reference for each verb.
 
 | Verb | Flags | Outcomes | What it does |
 |---|---|---|---|
-| `run -- ARGS` | `--bg`, `--name N`, `--release R`, `--cwd D`, `--label K=V`..., `--timeout S` | `created`, `started`, `already-running`, `ended`, `still-running` | Creates the instance, or matches the stored recipe of `--name`, and starts it. Web and ACP instances, and any instance with `--bg`, are left running. A headless instance runs in the foreground until `dsh` exits or `--timeout` passes. A different recipe under an existing name is refused. |
+| `run -- ARGS` | `--bg`, `--name N`, `--release R`, `--cwd D`, `--label K=V`..., `--patch FILE`..., `--timeout S` | `created`, `started`, `already-running`, `ended`, `still-running` | Creates the instance, or matches the stored recipe of `--name`, and starts it. Web and ACP instances, and any instance with `--bg`, are left running. A headless instance runs in the foreground until `dsh` exits or `--timeout` passes. A different recipe under an existing name is refused. |
 | `start NAME` | `--rerun` | `started`, `already-running` | Starts the instance again from its recorded recipe and its `current` release. Never creates one. A headless instance whose task ran is refused unless `--rerun` is given. |
 | `stop NAME` | `--invocation ID` | `stopped`, `already-stopped` | Stops the unit and every process it started. The recipe, the release roots and DSH's sessions stay. With `--invocation ID`, only the run of that invocation: any other is refused with `not-running`. |
 | `restart NAME` | | `restarted` | Clears a failed state, restarts on the `current` release and waits until the instance runs. Refused for headless instances. |
@@ -302,8 +302,9 @@ launcher flags before the app's arguments: the profile word or
 `dshd run --bg --name task-7 -- worker --patch ./fast.yml "summarise the open issues"`.
 They are part of the argv, so the recipe records them: every start,
 `start --rerun` included, boots the same profile with the same overlays,
-read live at that start, and `get` and `ls` show them as `profile` and
-`patches`. The same name with another profile or another overlay is a
+read live at that start. `get` shows them as `profile.name` and
+`profile.patches`, and each `ls` entry as `profile` and `profilePatches`.
+The same name with another profile or another overlay is a
 different recipe, refused with `exists-different-recipe`. DSH resolves a
 relative `--patch` against the instance's working directory, and reads the
 file again at every start. dshd has no `--transport` flag.
@@ -627,8 +628,8 @@ line, or `{"error":{"kind":KIND,"message":TEXT,"hint":COMMAND|null}}`.
   `run` and `wait`, once they followed a run, add `exitCode`, `signal` and
   `reason`.
 - `ls` prints one object:
-  `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy","labels"}],"linger":BOOL,"warnings":[...]}`,
-  so a supervisor can match its instances by label with one call.
+  `{"instances":[{"name","state","transport","profile","profilePatches","release","releaseState","enabled","since","remedy","labels"}],"linger":BOOL,"warnings":[...]}`,
+  where `profilePatches` is `get`'s `profile.patches`, so a supervisor can match its instances by label with one call.
 - `read --json` prints `{"name","invocationId","complete","streams","lines"}`;
   `attach --json` on a web instance prints `{"origin","port","urlFile"}`,
   and `url` with `--print-url`.

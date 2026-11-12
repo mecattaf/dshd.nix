@@ -37,8 +37,8 @@ transport.
   they need the client or the terminal that starts them.
 - Vary one run with `--patch FILE` after the profile word, as in
   `dshd run --bg --name task-7 -- worker --patch ./fast.yml "summarise the open issues"`;
-  the overlay is part of the recipe, every start applies it, and `get` and
-  `ls` show it in `patches`.
+  the overlay is part of the recipe, every start applies it, `get` shows it
+  in `profile.patches` and `ls` in `profilePatches`.
 - To make the overlay's content part of the instance, give it to dshd
   before `--`: `dshd run --bg --patch ./fast.yml --name task-7 -- worker "summarise the open issues"`.
   dshd snapshots the file (a regular file of at most 1 MiB) at creation
@@ -135,7 +135,8 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   `nohup` or `&` included. Nothing a session started survives its stop.
 - A name outlives its runs, and `stop NAME` stops whatever runs under it
   now. To stop only the run you started, keep its `invocationId` from
-  `run --json` and use `dshd stop --invocation ID NAME`: another
+  `run --json`, or `lastRun.invocationId` when that is null (a headless
+  task that ended already), and use `dshd stop --invocation ID NAME`: another
   invocation is refused with `not-running`, and nothing is stopped.
 - `run` never runs a headless task twice. Once it ran, `start` refuses with
   `task-already-ran`; `dshd start --rerun batch` submits the recorded prompt
@@ -168,7 +169,8 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   `lastRun.invocationId`, and read the run's totals from
   `lastRun.resources`.
   `remedy` is the command to run next, or null.
-- `ls`: `{"instances":[{"name","state","transport","profile","patches","release","releaseState","enabled","since","remedy","labels"}],"linger","warnings"}`.
+- `ls`: `{"instances":[{"name","state","transport","profile","profilePatches","release","releaseState","enabled","since","remedy","labels"}],"linger","warnings"}`.
+  `profilePatches` is `get`'s `profile.patches`, not its snapshot `patches`.
 - Mutating verbs: the status object plus `outcome` and `warnings`.
   `outcome` is one of created, started, already-running, stopped,
   already-stopped, restarted, updated, unchanged, enabled, already-enabled,

@@ -127,3 +127,7 @@
   `instance.json` and in the reports is the argv as typed, without a
   rewritten `--profile`. A record with `composition` is refused as
   unknown: remove the instance with `dshd rm NAME` and run it again.
+- **Breaking:** `read -n +N` is refused (`invalid-argument`) with a
+  pointer to `--head N`. It used to read as `-n N`, the newest N lines,
+  where journalctl's `-n +N` means the oldest; `--head N` is dshd's
+  spelling for those.

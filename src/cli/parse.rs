@@ -465,15 +465,24 @@ fn read(raw: &Raw, rest: Vec<OsString>) -> Result<ReadArgs, Error> {
         (None, None) => ("-n", None),
     };
     let lines = match given {
-        Some(value) => value
-            .to_str()
-            .and_then(|text| text.parse::<u32>().ok())
-            .ok_or_else(|| {
+        Some(value) => {
+            let count = value.to_str().and_then(|text| text.parse::<u32>().ok());
+            // journalctl reads `-n +N` as the oldest N lines; dshd's is --head.
+            if flag == "-n"
+                && let Some(count) = count
+                && value.to_str().is_some_and(|text| text.starts_with('+'))
+            {
+                return Err(Error::InvalidArgument(format!(
+                    "-n counts the newest lines; for the oldest {count}: --head {count}"
+                )));
+            }
+            count.ok_or_else(|| {
                 Error::InvalidArgument(format!(
                     "{flag} takes a number of lines, not {}",
                     OsText::new(value).display()
                 ))
-            })?,
+            })?
+        }
         None => READ_DEFAULT_LINES,
     };
     let head = raw.head.is_some();

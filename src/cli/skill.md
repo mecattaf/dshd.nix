@@ -97,6 +97,7 @@ run, stderr says `[dshd] incomplete: older output may be missing`; widen
 with `-n`. What a long run printed first, such as an id it announced at
 its start, is in `--head N`, its first N lines, which stay the same however
 long the run goes on; `complete` is then false when newer lines follow.
+journalctl's `-n +N` is refused: write `--head N`.
 A line longer than journald's `LineMax` (48K by default), which journald
 stores in pieces, is joined again: each line dsh wrote is one element of
 `lines`.

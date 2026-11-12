@@ -548,8 +548,9 @@ last run; dshd writes no log files. Each run starts with the journal line
 `dshd-run: run started` and ends with `dshd-run: run ended: RESULT`.
 `read` prints the newest lines; `--head N` prints the run's first N
 instead, so what a long run printed at its start is one bounded read
-away, however much it printed since. `"complete": true` in `read --json`
-means the lines are the whole run so far. When they are not, because they
+away, however much it printed since. journalctl's spelling for those,
+`-n +N`, is refused with a pointer to `--head N`. `"complete": true` in
+`read --json` means the lines are the whole run so far. When they are not, because they
 do not reach back to the run's start (`-n`, or journald rotated them away)
 or newer lines follow them (`--head`), stderr says which and `complete` is
 false. journald stores a line longer than its `LineMax` (48K by default)

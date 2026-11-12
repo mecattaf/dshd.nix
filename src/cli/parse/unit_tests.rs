@@ -184,6 +184,54 @@ fn read_wait_attach_arguments_parse() {
     assert_eq!(verb(&["attach", "--print-url", "a"]), Verb::Attach(web));
 }
 
+// catches: --head read as the newest lines, combined with -n or --follow, or
+// taken by a verb other than read
+#[test]
+fn read_head_parses() {
+    assert_eq!(
+        verb(&["read", "--head", "50", "a"]),
+        Verb::Read(ReadArgs {
+            name: name("a"),
+            lines: 50,
+            head: true,
+            follow: false
+        })
+    );
+    assert_eq!(
+        verb(&["read", "--json", "--head=0", "a"]),
+        Verb::Read(ReadArgs {
+            name: name("a"),
+            lines: 0,
+            head: true,
+            follow: false
+        })
+    );
+    for (args, message) in [
+        (
+            &["read", "--head", "5", "-n", "5", "a"][..],
+            "-n and --head exclude each other",
+        ),
+        (
+            &["read", "-f", "--head", "5", "a"],
+            "--head and --follow exclude each other",
+        ),
+        (
+            &["read", "--head", "first", "a"],
+            "--head takes a number of lines, not first",
+        ),
+        (
+            &["read", "--head", "1", "--head", "2", "a"],
+            "--head given twice",
+        ),
+        (&["get", "--head", "5", "a"], "get does not take --head"),
+    ] {
+        let error = parse(os(args)).unwrap_err();
+        assert_eq!(error.kind(), "invalid-argument", "{args:?}");
+        assert_eq!(error.to_string(), message, "{args:?}");
+    }
+    assert_eq!(exit(&["read", "--head", "a"]), 2);
+}
+
 // catches: labels, help or agent discovery parsed as the wrong verb or arguments
 #[test]
 fn labels_and_discovery_arguments_parse() {
@@ -266,54 +314,6 @@ fn stop_invocation_parses() {
             format!("{other} does not take --invocation")
         );
     }
-}
-
-// catches: --head read as the newest lines, combined with -n or --follow, or
-// taken by a verb other than read
-#[test]
-fn read_head_parses() {
-    assert_eq!(
-        verb(&["read", "--head", "50", "a"]),
-        Verb::Read(ReadArgs {
-            name: name("a"),
-            lines: 50,
-            head: true,
-            follow: false
-        })
-    );
-    assert_eq!(
-        verb(&["read", "--json", "--head=0", "a"]),
-        Verb::Read(ReadArgs {
-            name: name("a"),
-            lines: 0,
-            head: true,
-            follow: false
-        })
-    );
-    for (args, message) in [
-        (
-            &["read", "--head", "5", "-n", "5", "a"][..],
-            "-n and --head exclude each other",
-        ),
-        (
-            &["read", "-f", "--head", "5", "a"],
-            "--head and --follow exclude each other",
-        ),
-        (
-            &["read", "--head", "first", "a"],
-            "--head takes a number of lines, not first",
-        ),
-        (
-            &["read", "--head", "1", "--head", "2", "a"],
-            "--head given twice",
-        ),
-        (&["get", "--head", "5", "a"], "get does not take --head"),
-    ] {
-        let error = parse(os(args)).unwrap_err();
-        assert_eq!(error.kind(), "invalid-argument", "{args:?}");
-        assert_eq!(error.to_string(), message, "{args:?}");
-    }
-    assert_eq!(exit(&["read", "--head", "a"]), 2);
 }
 
 // catches: a bad flag, a flag on the wrong verb or a stray word accepted instead of exit 2

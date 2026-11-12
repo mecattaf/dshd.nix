@@ -1,0 +1,11 @@
+run
+--text
+--bg
+--name
+both
+--release
+%RELEASE%
+--
+both
+-p
+summarise the work directory

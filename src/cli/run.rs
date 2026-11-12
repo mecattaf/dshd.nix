@@ -30,9 +30,10 @@ use crate::tool::Tool;
 pub(super) fn run(ctx: &Context, args: &RunArgs) -> Result<u8, Error> {
     lifecycle::require_template(ctx)?;
     let (bg, timeout) = (args.bg, args.timeout);
-    let (lock, instance, created) = create(ctx, args)?;
-    let shown = lifecycle::bring_up(ctx, &instance, false, created)?;
+    let (lock, instance, created, several_apps) = create(ctx, args)?;
+    let mut shown = lifecycle::bring_up(ctx, &instance, false, created)?;
     drop(lock);
+    shown.warnings.extend(several_apps);
     if bg || instance.record.transport != Transport::None {
         status::print_outcome(ctx, shown)?;
         return Ok(0);
@@ -76,10 +77,11 @@ fn foreground(ctx: &Context, instance: &Instance, shown: Shown, timeout: u64) ->
 
 /// Resolves the recipe from argv and creates the instance, or matches the
 /// stored recipe of an existing one, whose labels are then set. Returns
-/// the instance lock, the instance as loaded under it, and whether it was
-/// created now. The root lock covers dsh materialising a missing profile,
-/// the name choice and the creation, never a systemctl call.
-fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool), Error> {
+/// the instance lock, the instance as loaded under it, whether it was
+/// created now, and the warning for a profile that lists several apps.
+/// The root lock covers dsh materialising a missing profile, the name
+/// choice and the creation, never a systemctl call.
+fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool, Option<String>), Error> {
     let release_given = args.release.is_some();
     let release = release::resolve(Path::new(name::RELEASES_DIR), args.release.as_deref())?;
     let cwd = match &args.cwd {
@@ -100,7 +102,9 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool), Error
     materialise
         .env(launch::DSH_HOME, &dsh_home)
         .current_dir(&cwd);
-    let transport = profile::transport(&dsh, materialise, &dsh_home, &selected)?;
+    let detected = profile::transport(&dsh, materialise, &dsh_home, &selected)?;
+    let several_apps = several_apps_warning(&selected, &detected);
+    let transport = detected.transport;
     let name = match &args.name {
         Some(name) => name.clone(),
         None => instance::choose_name(&ctx.state_root, &loaded, &selected)?,
@@ -135,5 +139,21 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool), Error
     if !created && instance::set_labels(&instance, &args.labels)? {
         instance = instance::load_strict(&ctx.state_root, &name)?;
     }
-    Ok((lock, instance, created))
+    Ok((lock, instance, created, several_apps))
+}
+
+/// The warning for a profile that lists more than one app bundle. DSH
+/// composes every bundle a profile lists into one tree, so the apps are
+/// mounted together and each layer's rows apply to the others; dshd holds
+/// the instance by the transport the first one selects.
+fn several_apps_warning(profile: &str, detected: &profile::Detected) -> Option<String> {
+    (detected.apps.len() > 1).then(|| {
+        format!(
+            "profile {profile} lists several apps ({}): DSH mounts every bundle a profile lists \
+             in one process, and dshd holds the instance as transport {}; give each app its own \
+             profile",
+            detected.apps.join(", "),
+            detected.transport.slug(),
+        )
+    })
 }

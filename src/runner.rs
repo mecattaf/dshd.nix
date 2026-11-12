@@ -493,7 +493,8 @@ fn check_transport(
 ) -> Result<(), Error> {
     let profile = &record.profile;
     let dsh_home = Path::new(profile.dsh_home.as_os_str());
-    let live = profile::transport(&Tool::at("dsh", dsh), materialise, dsh_home, &profile.name)?;
+    let live =
+        profile::transport(&Tool::at("dsh", dsh), materialise, dsh_home, &profile.name)?.transport;
     if live == record.transport {
         return Ok(());
     }

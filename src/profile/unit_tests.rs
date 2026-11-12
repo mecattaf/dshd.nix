@@ -52,7 +52,7 @@ fn an_existing_profile_is_read_as_it_is() {
     let before = tree(&home);
     let (dsh, log) = fake_dsh(scratch.path(), "{}");
     let found = transport(&dsh, command(&dsh, &home, scratch.path()), &home, "web");
-    assert_eq!(found.unwrap(), Transport::Web);
+    assert_eq!(found.unwrap().transport, Transport::Web);
     assert!(!log.exists(), "dsh never runs for an existing profile");
     assert_eq!(tree(&home), before, "the DSH home is left as it was");
 }
@@ -67,7 +67,7 @@ fn a_missing_profile_is_materialised_by_dsh() {
     let manifest = r#"{"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-acp-app"]}}}"#;
     let (dsh, log) = fake_dsh(scratch.path(), manifest);
     let found = transport(&dsh, command(&dsh, &home, &cwd), &home, "acp");
-    assert_eq!(found.unwrap(), Transport::Acp);
+    assert_eq!(found.unwrap().transport, Transport::Acp);
     assert_eq!(
         fs::read_to_string(&log).unwrap(),
         format!(
@@ -88,7 +88,7 @@ fn a_missing_profile_is_materialised_by_dsh() {
         "the home holds what dsh wrote and nothing else"
     );
     let again = transport(&dsh, command(&dsh, &home, &cwd), &home, "acp");
-    assert_eq!(again.unwrap(), Transport::Acp);
+    assert_eq!(again.unwrap().transport, Transport::Acp);
     assert_eq!(
         fs::read_to_string(&log).unwrap().lines().count(),
         1,
@@ -141,7 +141,7 @@ fn detect_transport_by_bundle_name() {
         .unwrap();
         detect_transport(&manifest, "p")
     };
-    let refused = |result: Result<Transport, Error>| match result {
+    let refused = |result: Result<Detected, Error>| match result {
         Err(Error::UnsupportedProfile { profile, app }) if profile == "p" => app,
         other => panic!("{other:?}"),
     };
@@ -151,29 +151,35 @@ fn detect_transport_by_bundle_name() {
         "no manifest"
     );
     assert_eq!(
-        with(r#"["@deepseek-ai/dsh-base","@deepseek-ai/dsh-headless"]"#).unwrap(),
+        with(r#"["@deepseek-ai/dsh-base","@deepseek-ai/dsh-headless"]"#)
+            .unwrap()
+            .transport,
         Transport::None
     );
     assert_eq!(
-        with(r#"["@deepseek-ai/dsh-base","@deepseek-ai/dsh-web-app"]"#).unwrap(),
+        with(r#"["@deepseek-ai/dsh-base","@deepseek-ai/dsh-web-app"]"#)
+            .unwrap()
+            .transport,
         Transport::Web
     );
     assert_eq!(
-        with(r#"["@deepseek-ai/dsh-base","@deepseek-ai/dsh-acp-app"]"#).unwrap(),
+        with(r#"["@deepseek-ai/dsh-base","@deepseek-ai/dsh-acp-app"]"#)
+            .unwrap()
+            .transport,
         Transport::Acp
     );
     assert_eq!(
-        with(r#"["dsh-web-app"]"#).unwrap(),
+        with(r#"["dsh-web-app"]"#).unwrap().transport,
         Transport::Web,
         "unscoped"
     );
     assert_eq!(
-        with(r#"["dsh-acp-app","dsh-web-app"]"#).unwrap(),
+        with(r#"["dsh-acp-app","dsh-web-app"]"#).unwrap().transport,
         Transport::Web,
         "web before acp"
     );
     assert_eq!(
-        with(r#"["dsh-web-app","dsh-headless"]"#).unwrap(),
+        with(r#"["dsh-web-app","dsh-headless"]"#).unwrap().transport,
         Transport::None,
         "headless first"
     );
@@ -200,5 +206,41 @@ fn detect_transport_by_bundle_name() {
         refused(detect_transport(&manifest, "p")),
         UnheldApp::Other,
         "manifest without bundles"
+    );
+}
+
+// catches: a profile that lists several apps reported as one, so `run` cannot say that DSH mounts them together
+#[test]
+fn every_listed_app_is_reported() {
+    let scratch = Scratch::new("profile-apps");
+    let manifest = scratch.path().join(MANIFEST);
+    let apps = |bundles: &str| {
+        fs::write(
+            &manifest,
+            format!(r#"{{"dsh":{{"profile":{{"bundles":{bundles}}}}}}}"#),
+        )
+        .unwrap();
+        detect_transport(&manifest, "p").unwrap()
+    };
+    assert_eq!(
+        apps(r#"["@deepseek-ai/dsh-base","@deepseek-ai/dsh-web-app","my-config"]"#),
+        Detected {
+            transport: Transport::Web,
+            apps: vec!["dsh-web-app"],
+        },
+        "one app among other bundles"
+    );
+    assert_eq!(
+        apps(r#"["@deepseek-ai/dsh-base","@deepseek-ai/dsh-web-app","@deepseek-ai/dsh-headless"]"#),
+        Detected {
+            transport: Transport::None,
+            apps: vec!["dsh-headless", "dsh-web-app"],
+        },
+        "in the order that decides the transport, not the manifest's"
+    );
+    assert_eq!(
+        apps(r#"["dsh-acp-app","dsh-sdk-app","dsh-web-app"]"#).apps,
+        vec!["dsh-web-app", "dsh-acp-app", "dsh-sdk-app"],
+        "an SDK bundle beside a held app is listed too"
     );
 }

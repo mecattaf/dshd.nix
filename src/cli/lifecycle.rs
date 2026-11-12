@@ -14,7 +14,7 @@ use crate::cli::{Context, NameArgs, StopArgs};
 use crate::error::{Error, LINGER_REMEDY, OtherInvocation, StartFailure};
 use crate::fsx::{self, Lock};
 use crate::instance::{self, Instance};
-use crate::name::{InstanceName, RuntimeDir, TEMPLATE_FILE};
+use crate::name::{InstanceDir, InstanceName, RuntimeDir, TEMPLATE_FILE};
 use crate::out::{self, Style};
 use crate::record::Transport;
 use crate::systemctl::{ActiveState, LoadState, UnitFacts, UnitResult};
@@ -54,12 +54,7 @@ pub(super) fn stop(ctx: &Context, args: &StopArgs) -> Result<(), Error> {
     if let Some(expected) = &args.invocation {
         status::require(ctx, name, &facts)?;
         let dir = ctx.state_root.instance(name);
-        let recorded = || {
-            Ok(instance::read_last_run(&dir)?
-                .map(|run| run.invocation_id)
-                .filter(|id| !id.is_empty()))
-        };
-        require_invocation(name, &facts, recorded, expected)?;
+        require_invocation(name, &facts, || recorded_invocation(&dir), expected)?;
     }
     if matches!(
         facts.active_state,
@@ -117,12 +112,20 @@ fn lock_if_present(ctx: &Context, name: &InstanceName) -> Result<Option<Lock>, E
     }
 }
 
+/// The invocation id of the run the runner last recorded, if any.
+pub(super) fn recorded_invocation(dir: &InstanceDir) -> Result<Option<String>, Error> {
+    Ok(instance::read_last_run(dir)?
+        .map(|run| run.invocation_id)
+        .filter(|id| !id.is_empty()))
+}
+
 /// `OtherInvocation` unless `expected` names the run `stop --invocation`
-/// may stop: the unit's current invocation while it is up; while it is
-/// not, its last one, which is systemd's own while the manager still
-/// names it and else the one the runner recorded (`recorded`, read only
-/// then). Ids compare without regard to case.
-fn require_invocation(
+/// may stop or `rm --invocation` may remove: the unit's current
+/// invocation while it is up; while it is not, its last one, which is
+/// systemd's own while the manager still names it and else the one the
+/// runner recorded (`recorded`, read only then). Ids compare without
+/// regard to case.
+pub(super) fn require_invocation(
     name: &InstanceName,
     facts: &UnitFacts,
     recorded: impl FnOnce() -> Result<Option<String>, Error>,

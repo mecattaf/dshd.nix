@@ -69,8 +69,9 @@ pub enum Error {
     UnitMasked(String),
     /// The verb needs the instance running.
     NotRunning(String),
-    /// `stop --invocation ID`: the unit runs another invocation, or it is
-    /// stopped and its last run was another one or none.
+    /// `stop --invocation ID` or `rm --invocation ID`: the unit runs
+    /// another invocation, or it is stopped and its last run was another
+    /// one or none.
     OtherInvocation(Box<OtherInvocation>),
     /// Another controller holds the ACP relay.
     AttachedElsewhere(String),
@@ -149,7 +150,8 @@ pub struct RecipeDifference {
     pub fields: Vec<(&'static str, String, String)>,
 }
 
-/// What `stop --invocation` found instead of the run it names.
+/// What `stop --invocation` or `rm --invocation` found instead of the run
+/// it names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OtherInvocation {
     /// The instance.

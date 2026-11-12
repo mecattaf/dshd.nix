@@ -113,6 +113,16 @@ pub struct StopArgs {
     pub invocation: Option<String>,
 }
 
+/// `dshd rm [--invocation ID] NAME`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RmArgs {
+    /// The instance.
+    pub name: InstanceName,
+    /// `--invocation ID`: remove only an instance whose last run was this
+    /// systemd invocation id, 32 lowercase hex digits.
+    pub invocation: Option<String>,
+}
+
 /// `dshd update [-R] NAME`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateArgs {
@@ -206,8 +216,8 @@ pub enum Verb {
     Enable(NameArgs),
     /// `disable NAME`.
     Disable(NameArgs),
-    /// `rm NAME`.
-    Rm(NameArgs),
+    /// `rm [--invocation ID] NAME`.
+    Rm(RmArgs),
     /// `help [VERB]`, and `--help` anywhere.
     Help(Option<String>),
     /// `--skill`.

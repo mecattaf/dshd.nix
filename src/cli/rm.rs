@@ -1,13 +1,16 @@
-//! `dshd rm NAME`: under the root and instance locks, refuses a running instance,
-//! reports the status observed just before deletion, clears the unit's
-//! failed state and its `dshd.target` link, and removes the tree. A record
-//! a newer dshd wrote is removed too, since `rm` is the remedy dshd prints
-//! for it: removal reads nothing from the record.
+//! `dshd rm [--invocation ID] NAME`: under the root and instance locks, refuses a
+//! running instance, reports the status observed just before deletion,
+//! clears the unit's failed state and its `dshd.target` link, and removes
+//! the tree. A record a newer dshd wrote is removed too, since `rm` is the
+//! remedy dshd prints for it: removal reads nothing from the record.
+//! `--invocation` first compares the unit's invocation, as `stop
+//! --invocation` does, under the same locks, so a run dshd starts after
+//! the caller looked is never removed.
 
 use super::lifecycle;
 use super::status::{self, Shown};
 use crate::cli::report::OutcomeSlug;
-use crate::cli::{Context, NameArgs};
+use crate::cli::{Context, RmArgs};
 use crate::error::Error;
 use crate::fsx;
 use crate::instance;
@@ -15,7 +18,7 @@ use crate::out;
 use crate::systemctl::ActiveState;
 
 /// Runs the verb.
-pub(super) fn run(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
+pub(super) fn run(ctx: &Context, args: &RmArgs) -> Result<(), Error> {
     let name = &args.name;
     let root_lock = instance::lock_root(&ctx.state_root)?;
     let dir = ctx.state_root.instance(name);
@@ -26,6 +29,15 @@ pub(super) fn run(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
     };
     let unit = name.unit();
     let facts = ctx.systemctl.show(&unit)?;
+    if let Some(expected) = &args.invocation {
+        status::require(ctx, name, &facts)?;
+        lifecycle::require_invocation(
+            name,
+            &facts,
+            || lifecycle::recorded_invocation(&dir),
+            expected,
+        )?;
+    }
     if !matches!(
         facts.active_state,
         ActiveState::Inactive | ActiveState::Failed

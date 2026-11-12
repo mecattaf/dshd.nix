@@ -13,7 +13,7 @@ use lexopt::{Arg, Parser};
 use super::render;
 use crate::cli::{
     AttachArgs, DEFAULT_TIMEOUT_SECS, LabelArgs, LsArgs, NameArgs, READ_DEFAULT_LINES, ReadArgs,
-    RunArgs, StartArgs, StopArgs, UpdateArgs, Verb, WaitArgs,
+    RmArgs, RunArgs, StartArgs, StopArgs, UpdateArgs, Verb, WaitArgs,
 };
 use crate::error::Error;
 use crate::name::InstanceName;
@@ -103,7 +103,7 @@ impl Word {
                 "--text",
             ],
             Self::Start => &["--rerun", "--json", "--text"],
-            Self::Stop => &["--invocation", "--json", "--text"],
+            Self::Stop | Self::Rm => &["--invocation", "--json", "--text"],
             Self::Update => &["--restart", "--json", "--text"],
             Self::Read => &["--lines", "--head", "--follow", "--json"],
             Self::Wait => &["--timeout", "--json", "--text"],
@@ -114,8 +114,7 @@ impl Word {
             | Self::Get
             | Self::Label
             | Self::Enable
-            | Self::Disable
-            | Self::Rm => &["--json", "--text"],
+            | Self::Disable => &["--json", "--text"],
         }
     }
 }
@@ -300,7 +299,10 @@ fn build(raw: Raw, tail: Option<Vec<OsString>>) -> Result<Verb, Error> {
         Word::Get => named(rest).map(Verb::Get),
         Word::Enable => named(rest).map(Verb::Enable),
         Word::Disable => named(rest).map(Verb::Disable),
-        Word::Rm => named(rest).map(Verb::Rm),
+        Word::Rm => Ok(Verb::Rm(RmArgs {
+            name: one_name(verb, rest)?,
+            invocation: raw.invocation.map(invocation).transpose()?,
+        })),
         Word::Update => Ok(Verb::Update(UpdateArgs {
             name: one_name(verb, rest)?,
             restart: raw.has("--restart"),

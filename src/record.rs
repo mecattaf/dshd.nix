@@ -338,12 +338,10 @@ mod tests {
             RunPatch::digest(b""),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
-        assert_eq!(
-            RunPatch::digest(b"abc"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
+        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(RunPatch::digest(b"abc"), abc);
         let patch = RunPatch::of(3, b"abc", OsText::from("p.yml"));
-        assert_eq!(patch.file, "03-ba7816bf8f01cfea.yml");
+        assert_eq!(patch.file, format!("03-{}.yml", abc.get(..16).unwrap()));
         assert_eq!(
             RunPatch::of(12, b"", OsText::from("q")).file,
             "12-e3b0c44298fc1c14.yml"

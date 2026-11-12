@@ -124,17 +124,35 @@ const PWD: &str = "PWD";
 /// DSH's home under the user's home when `DSH_HOME` is blank.
 const DEFAULT_DSH_HOME: &str = ".dsh";
 
-/// The profile native argv selects, by DSH's launcher grammar: a first
-/// token not starting with `-` is the profile word; otherwise the leading
-/// `--profile V|--profile=V` and `--patch V|--patch=V` flags are scanned up
-/// to the first other token. The argv itself is dsh's, recorded as typed.
+/// What native argv selects, by DSH's launcher grammar: the profile and the
+/// `--patch` overlays DSH applies after the profile layer, in argv order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Selection {
+    /// The profile name.
+    pub profile: String,
+    /// The `--patch` values as typed; DSH resolves them against the
+    /// instance's working directory at every start.
+    pub patches: Vec<OsString>,
+}
+
+/// The profile native argv selects. See [`selection`].
+pub fn selected_profile(argv: &[OsString]) -> Result<String, Error> {
+    selection(argv).map(|selection| selection.profile)
+}
+
+/// The profile and the patch overlays native argv selects, by DSH's
+/// launcher grammar: a first token not starting with `-` is the profile
+/// word; otherwise the leading `--profile V|--profile=V` and
+/// `--patch V|--patch=V` flags are scanned up to the first other token,
+/// after the profile word too. The argv itself is dsh's, recorded as typed.
 ///
 /// Refuses (invalid-argument) what cannot be a held session: no profile,
 /// a profile selected twice, the word `plugin`, a profile that is not one
 /// directory name, `--from-default-profile`, and the flags that print and
 /// exit (`--dump-*`, `-V`, `--version`).
-pub fn selected_profile(argv: &[OsString]) -> Result<String, Error> {
+pub fn selection(argv: &[OsString]) -> Result<Selection, Error> {
     let mut profile = None;
+    let mut patches = Vec::new();
     let mut index = 0;
     if let Some(word) = argv
         .first()
@@ -169,10 +187,14 @@ pub fn selected_profile(argv: &[OsString]) -> Result<String, Error> {
                 return Err(refuse("the profile is selected twice".to_owned()));
             }
             profile = Some(profile_name(value)?);
+        } else {
+            patches.push(value.to_owned());
         }
         index += 1;
     }
-    profile.ok_or_else(|| refuse("no profile: give a profile word or --profile NAME".to_owned()))
+    let profile = profile
+        .ok_or_else(|| refuse("no profile: give a profile word or --profile NAME".to_owned()))?;
+    Ok(Selection { profile, patches })
 }
 
 /// For a web instance: appends `--no-open` unless present, and `--port N`

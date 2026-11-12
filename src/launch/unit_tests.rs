@@ -78,6 +78,52 @@ fn selects_the_profile_by_the_launcher_grammar() -> Result<(), Error> {
     Ok(())
 }
 
+// catches: a run's --patch overlays lost, reordered, taken from the app's arguments, or missed in their inline form
+#[test]
+fn selection_keeps_the_patch_overlays_in_order() -> Result<(), Error> {
+    let chosen = |tokens: &[&str]| -> Result<(String, Vec<OsString>), Error> {
+        let selection = super::selection(&argv(tokens))?;
+        Ok((selection.profile, selection.patches))
+    };
+    assert_eq!(chosen(&["web"])?, ("web".to_owned(), Vec::new()));
+    assert_eq!(
+        chosen(&["headless", "--patch", "pair.yml", "summarise"])?,
+        ("headless".to_owned(), argv(&["pair.yml"]))
+    );
+    assert_eq!(
+        chosen(&[
+            "--patch=/a.yml",
+            "--profile",
+            "worker",
+            "--patch",
+            "./b.yml",
+            "-p",
+            "task",
+            "--patch",
+            "c.yml",
+        ])?,
+        ("worker".to_owned(), argv(&["/a.yml", "./b.yml"])),
+        "the overlays end with the launcher flags; a later --patch is the app's"
+    );
+    assert_eq!(
+        chosen(&["web", "--", "--patch", "x.yml"])?.1,
+        Vec::<OsString>::new(),
+        "nothing after `--` is the launcher's"
+    );
+    let raw = OsString::from_vec(vec![b'p', 0xff]);
+    assert_eq!(
+        super::selection(&[
+            OsString::from("acp"),
+            OsString::from("--patch"),
+            raw.clone()
+        ])?
+        .patches,
+        vec![raw],
+        "a path that is not UTF-8 is kept as it is"
+    );
+    Ok(())
+}
+
 // catches: an argv accepted that would manage plugins, recreate the profile at every start, print and exit, select two
 // profiles, or name a profile outside the DSH home's profiles directory (P1.2)
 #[test]

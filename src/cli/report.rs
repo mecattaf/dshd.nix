@@ -83,6 +83,8 @@ pub struct ProfileReport {
     pub name: String,
     /// The DSH home the profile lives in.
     pub dsh_home: String,
+    /// The `--patch` overlays the recorded argv gives, in order, as typed.
+    pub patches: Vec<String>,
 }
 
 /// The `web` block of a status object.
@@ -187,6 +189,10 @@ pub struct ListEntry {
     pub state: StateSlug,
     /// Recorded transport.
     pub transport: Option<Transport>,
+    /// Recorded profile name.
+    pub profile: Option<String>,
+    /// The `--patch` overlays of the recorded argv.
+    pub patches: Vec<String>,
     /// Release label.
     pub release: Option<String>,
     /// Release state.

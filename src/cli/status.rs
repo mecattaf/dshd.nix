@@ -19,6 +19,7 @@ use crate::cli::{Context, NameArgs};
 use crate::error::Error;
 use crate::fsx;
 use crate::instance::{self, Instance};
+use crate::launch;
 use crate::name::{self, InstanceName, RuntimeDir};
 use crate::out;
 use crate::record::{LastRun, OsText, Transport};
@@ -434,7 +435,23 @@ fn fill_recipe(report: &mut StatusReport, instance: &Instance) {
     report.profile = Some(ProfileReport {
         name: record.profile.name.clone(),
         dsh_home: record.profile.dsh_home.display(),
+        patches: recorded_patches(&record.args),
     });
+}
+
+/// The `--patch` overlays of a recorded argv, by the launcher grammar that
+/// accepted it at creation; none for an argv it no longer accepts.
+fn recorded_patches(args: &[OsText]) -> Vec<String> {
+    let tokens: Vec<OsString> = args.iter().map(|arg| arg.as_os_str().to_owned()).collect();
+    launch::selection(&tokens)
+        .map(|selection| {
+            selection
+                .patches
+                .into_iter()
+                .map(|patch| OsText::new(patch).display())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The pinned port, and the announced address with its secret redacted

@@ -1,0 +1,12 @@
+run
+--text
+--name
+batch
+--release
+%RELEASE%
+--
+headless
+--patch
+pair.yml
+-p
+summarise the work directory

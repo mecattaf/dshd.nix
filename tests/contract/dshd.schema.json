@@ -234,6 +234,18 @@
             }
           ]
         },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "patches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "release": {
           "type": [
             "string",
@@ -271,6 +283,8 @@
         "name",
         "state",
         "transport",
+        "profile",
+        "patches",
         "release",
         "releaseState",
         "enabled",
@@ -730,11 +744,18 @@
         },
         "dshHome": {
           "type": "string"
+        },
+        "patches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
         "name",
-        "dshHome"
+        "dshHome",
+        "patches"
       ],
       "additionalProperties": false
     },

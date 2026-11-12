@@ -1,0 +1,2 @@
+state/dshd/pair/current %RELEASE%
+state/dshd/pair/booted %RELEASE%

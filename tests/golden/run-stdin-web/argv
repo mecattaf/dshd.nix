@@ -1,0 +1,9 @@
+run
+--name
+page
+--release
+%RELEASE%
+--stdin
+./brief.md
+--
+web

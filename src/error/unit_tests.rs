@@ -43,6 +43,14 @@ fn usage_cases() -> Vec<(Error, &'static str, u8)> {
             "invalid-argument",
             2,
         ),
+        (
+            Error::StdinUnreadable {
+                path: "-".into(),
+                reason: "larger than 1 MiB".into(),
+            },
+            "invalid-argument",
+            2,
+        ),
         (Error::NotFound("x".into()), "not-found", 3),
         (Error::ReleaseNotFound("x".into()), "release-not-found", 3),
     ]
@@ -182,6 +190,7 @@ fn known_variant(error: &Error) {
         | Error::CreateWithRun(_)
         | Error::PathPinned(_)
         | Error::PatchUnreadable { .. }
+        | Error::StdinUnreadable { .. }
         | Error::NotFound(_)
         | Error::ReleaseNotFound(_)
         | Error::ReleaseInvalid { .. }

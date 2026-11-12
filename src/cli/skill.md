@@ -46,6 +46,13 @@ transport.
   the overlays typed in the argv. Editing or deleting the file changes
   nothing; the same name with other content is `exists-different-recipe`.
   `get` lists the snapshots in `patches` with their `sha256`.
+- A headless task longer than one argument (Linux caps one at 128 KiB)
+  goes in as stdin: give DSH's task `-` and the input to dshd before `--`,
+  as in `dshd run --bg --stdin ./brief.md --name task-8 -- worker -`, or
+  `--stdin -` to pass dshd's own stdin. dshd snapshots it (at most 1 MiB)
+  at creation and every start, `start --rerun` included, gives `dsh` the
+  copy as its stdin; other input under the same name is
+  `exists-different-recipe`. Web and acp profiles refuse `--stdin`.
 - One app per profile: DSH mounts every bundle a profile lists, so a
   profile with two apps gets a warning and the transport of the first. A
   web instance and headless tasks of one configuration need two profiles.

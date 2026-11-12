@@ -185,6 +185,36 @@ impl RunPatch {
     }
 }
 
+/// The `run --stdin FILE` content dshd snapshotted into the instance at
+/// creation: `%S/dshd/NAME/stdin` is what every start hands a headless
+/// dsh as its stdin, and its digest is part of the recipe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunStdin {
+    /// Lowercase hex sha256 of the snapshot.
+    pub sha256: String,
+    /// The path as given at creation, `-` for dshd's own stdin;
+    /// informational, never read again.
+    pub source: OsText,
+    /// Keys this version does not know; an acting reader refuses them.
+    #[serde(flatten)]
+    pub unrecognized: serde_json::Map<String, serde_json::Value>,
+}
+
+impl RunStdin {
+    /// The largest content `--stdin` takes, in bytes (1 MiB, as `--patch`).
+    pub const MAX_BYTES: u64 = RunPatch::MAX_BYTES;
+
+    /// The snapshot of `bytes`, read from `source`.
+    pub fn of(bytes: &[u8], source: OsText) -> Self {
+        Self {
+            sha256: RunPatch::digest(bytes),
+            source,
+            unrecognized: serde_json::Map::new(),
+        }
+    }
+}
+
 /// `instance.json`: the recipe, rewritten by labels and the update environment strip.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -207,6 +237,12 @@ pub struct InstanceRecord {
     /// finds it unrecognized and refuses to act.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub patches: Vec<RunPatch>,
+    /// The `run --stdin` snapshot a headless dsh reads as its stdin at
+    /// every start. Absent when none was given, so a record made without
+    /// it is written exactly as before; a reader that does not know the
+    /// key finds it unrecognized and refuses to act.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdin: Option<RunStdin>,
     /// The environment captured at create time, after the closed exclusion
     /// list and the release's `unsetEnvironment` were applied.
     pub environment: Vec<EnvVar>,
@@ -371,6 +407,28 @@ mod tests {
             RunPatch::of(12, b"", OsText::from("q")).file,
             "12-e3b0c44298fc1c14.yml"
         );
+    }
+
+    // catches: a stdin snapshot whose digest is not the content's sha256, or a record without one that no
+    // longer serializes exactly as before
+    #[test]
+    fn run_stdin_digest_and_absent_key() {
+        let stdin = RunStdin::of(b"abc", OsText::from("-"));
+        assert_eq!(stdin.sha256, RunPatch::digest(b"abc"));
+        let text = include_str!("../tests/fixtures/instance.json");
+        let mut record: InstanceRecord = serde_json::from_str(text).unwrap();
+        assert_eq!(record.stdin, None);
+        let plain = String::from_utf8(to_json(&record).unwrap()).unwrap();
+        assert!(!plain.contains("stdin"), "{plain}");
+        record.stdin = Some(stdin.clone());
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(
+            json.get("stdin").unwrap(),
+            &serde_json::json!({"sha256": stdin.sha256, "source": "-"})
+        );
+        let back: InstanceRecord = serde_json::from_value(json).unwrap();
+        assert_eq!(back.stdin, Some(stdin));
+        assert!(back.unrecognized.is_empty());
     }
 
     // catches: a transport named one way in records and JSON and another in messages and the human output

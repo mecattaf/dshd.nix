@@ -91,3 +91,45 @@ fn check_patches_refuses_a_changed_or_missing_snapshot() {
     }
     assert!(refused(&record), "a name outside the patches directory");
 }
+
+// catches: a start that hands a web or acp dsh a stdin snapshot, or one that hands a headless dsh a missing
+// snapshot or one whose content changed since creation
+#[test]
+fn check_stdin_refuses_a_changed_missing_or_misplaced_snapshot() {
+    use std::fs;
+
+    use crate::fsx::testing::Scratch;
+    use crate::record::RunStdin;
+
+    let scratch = Scratch::new("runner-stdin");
+    let dir = InstanceDir::new(scratch.path().to_path_buf());
+    let name = InstanceName::parse("batch").unwrap();
+    let mut record: InstanceRecord =
+        serde_json::from_str(include_str!("../../tests/fixtures/instance.json")).unwrap();
+    record.transport = Transport::None;
+    assert_eq!(check_stdin(&name, &dir, &record).unwrap(), None);
+    record.stdin = Some(RunStdin::of(b"the task\n", OsText::from("task.txt")));
+    let refused = |record: &InstanceRecord| {
+        matches!(
+            check_stdin(&name, &dir, record),
+            Err(Error::InconsistentState { .. })
+        )
+    };
+    assert!(refused(&record), "a missing snapshot");
+    fs::write(dir.stdin(), b"the task\n").unwrap();
+    assert_eq!(
+        check_stdin(&name, &dir, &record).unwrap(),
+        Some(dir.stdin())
+    );
+    fs::write(dir.stdin(), b"another task\n").unwrap();
+    assert!(refused(&record), "a snapshot whose content changed");
+    fs::write(dir.stdin(), b"the task\n").unwrap();
+    for transport in [Transport::Web, Transport::Acp] {
+        record.transport = transport;
+        assert!(
+            refused(&record),
+            "a snapshot for transport {}",
+            transport.slug()
+        );
+    }
+}

@@ -1,13 +1,18 @@
 # VM: dshd's own `run --patch`, the overlay snapshotted into the instance
 # at creation, with the stub dsh, which prints `stub-dsh: patch P sha256=D`
-# to the journal for each --patch it receives.
+# to the journal for each --patch it receives; and `run --stdin`, a
+# headless task's input snapshotted the same way, which the stub reads for
+# the task `-` and reports as `stub-dsh: stdin sha256=D`.
 # catches: an overlay read again from its source at a later start, a
 # changed overlay accepted under an existing name, the same overlay refused,
 # snapshots given to dsh out of order, after the overlays typed in the argv
 # or not right after the profile, a snapshot lost by a restart systemd
 # makes, a changed snapshot handed to dsh, `get` reporting another digest
-# than the file holds, a snapshot left behind by `rm`, and an instance
-# without --patch whose record changed.
+# than the file holds, a snapshot left behind by `rm`, an instance without
+# --patch whose record changed, a headless dsh that reads /dev/null although
+# --stdin gave it a task larger than one argument, dshd's own stdin not
+# taken for --stdin -, other input under an existing name accepted, and
+# --stdin taken for a web profile.
 { self, pkgs }:
 let
   vm = import ./vm-node.nix { inherit self pkgs; };
@@ -49,6 +54,21 @@ pkgs.testers.runNixOSTest {
             pairs.append((path, value))
         assert len(pairs) == count, pairs
         return pairs
+
+
+    def stdin_lines(name: str, count: int) -> list[str]:
+        """The digests the stub read as its stdin, every run of dshd@NAME
+        in order, once there are `count` of them."""
+        journal = (
+            f"journalctl --user -u dshd@{name}.service --no-pager -o cat"
+            " | sed -n 's/^stub-dsh: stdin sha256=//p'"
+        )
+        machine.wait_until_succeeds(
+            alice(f'test "$({journal} | wc -l)" -ge {count}'), timeout=WAIT
+        )
+        lines = run(journal).split()
+        assert len(lines) == count, lines
+        return lines
 
 
     def refused(spec: str) -> str:
@@ -156,9 +176,51 @@ pkgs.testers.runNixOSTest {
         assert get("plain")["patches"] == []
         receipt("plain", "no-patch-no-change")
 
+    # catches: a headless dsh that reads /dev/null although --stdin gave it
+    # a task larger than one argument may be, a rerun that reads the source
+    # again, a snapshot with a loose mode, or one left behind by rm
+    with subtest("stdin snapshot is the task"):
+        brief = "/tmp/brief.md"
+        run(f"head -c 140000 /dev/zero | tr '\\0' a > {brief}; echo >> {brief}")
+        held = run(f"sha256sum {brief}").split()[0]
+        assert run_bg(f"--name brief --stdin {brief} -- headless -", "headless")["outcome"] == "created"
+        wait("brief")
+        run(f"rm {brief}")
+        assert dshd("start --rerun brief")["outcome"] == "started"
+        wait("brief")
+        assert stdin_lines("brief", 2) == [held, held]
+        record = json.loads(run(f"cat {state}/brief/instance.json"))
+        assert record["stdin"] == {"sha256": held, "source": brief}, record["stdin"]
+        assert record["args"] == ["headless", "-"], record["args"]
+        assert run(f"stat -c %a {state}/brief/stdin").strip() == "600"
+        receipt("brief", "stdin-snapshot-is-the-task")
+        assert dshd("rm brief")["outcome"] == "removed"
+        machine.fail(f"test -e {state}/brief")
+
+    # catches: --stdin - not reading dshd's own stdin, or other input under
+    # an existing name accepted as the same recipe
+    with subtest("stdin from dshd's stdin"):
+        piped = "env DSH_STUB_MODE=headless dshd run --bg --json --name piped --stdin - -- headless -"
+        assert json.loads(run(f"printf 'say ok\\n' | {piped}"))["outcome"] == "created"
+        wait("piped")
+        assert stdin_lines("piped", 1) == [digest("say ok\n")]
+        status, err = attempt(f"printf 'say other\\n' | {piped}")
+        assert (status, json.loads(err)["error"]["kind"]) == (4, "exists-different-recipe"), err
+        receipt("piped", "stdin-from-dshd-stdin")
+
+    # catches: --stdin taken for a profile whose dsh reads no task from
+    # stdin, or an instance made before the refusal
+    with subtest("web refuses stdin"):
+        write("~/task.md", "say ok\n")
+        status, err = attempt("dshd run --bg --json --name page --stdin ~/task.md -- web")
+        assert (status, json.loads(err)["error"]["kind"]) == (2, "invalid-argument"), err
+        machine.fail(f"test -e {state}/page")
+        receipt("piped", "web-refuses-stdin")
+
     finish([
         "changed-content-refused", "changed-snapshot-refused", "get-and-rm", "no-patch-no-change", "order-and-position",
-        "same-content-same-recipe", "snapshot-survives-source", "web-restart-keeps-snapshot",
+        "same-content-same-recipe", "snapshot-survives-source", "stdin-from-dshd-stdin",
+        "stdin-snapshot-is-the-task", "web-refuses-stdin", "web-restart-keeps-snapshot",
     ])
   '';
 }

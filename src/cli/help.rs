@@ -54,15 +54,15 @@ const FROM_INSIDE: &str =
     "Run from inside the instance, the command ends with the instance, and systemd
 still completes the action; dshd get NAME from outside shows the result.";
 
-const RUN: &str = r"Usage: dshd run [--bg] [--name NAME] [--release RELEASE] [--cwd DIR] [--label KEY=VALUE]... [--patch FILE]... [--timeout SECONDS] [--json | --text] -- DSH ARGUMENTS
+const RUN: &str = r"Usage: dshd run [--bg] [--name NAME] [--release RELEASE] [--cwd DIR] [--label KEY=VALUE]... [--patch FILE]... [--stdin FILE] [--timeout SECONDS] [--json | --text] -- DSH ARGUMENTS
 
 Creates an instance that runs `dsh DSH ARGUMENTS` in DIR with this shell's
 environment, as the unit dshd@NAME, and starts it. A NAME that exists with
 the same recipe is started and then its labels are set, so a run that is
 refused or fails to start leaves them as they were; one with a different
 recipe is refused. The recipe is the directory, the arguments, the profile,
-the transport, the content of each --patch FILE, and the release when
---release is given. An instance that runs already is reported, not
+the transport, the content of each --patch FILE and of --stdin FILE, and
+the release when --release is given. An instance that runs already is reported, not
 restarted.
 
 --patch FILE copies FILE into the instance at creation; every start hands
@@ -70,6 +70,12 @@ dsh that copy with --patch right after the profile, before the --patch
 flags in DSH ARGUMENTS, and FILE is never read again. A relative FILE is
 read from the current directory, not from --cwd; dsh resolves a --patch in
 DSH ARGUMENTS against --cwd.
+
+--stdin FILE copies FILE, or with - this command's own stdin, into a
+headless instance at creation; every start gives dsh that copy as its
+stdin, which dsh reads as the task when the task is -. A task larger than
+one argument may be goes this way. Without --stdin, dsh's stdin is
+/dev/null.
 
 dsh runs the profile as it is in its DSH home at every start. dshd only
 reads the profile's bundles, which fix the transport at creation; a shipped
@@ -91,6 +97,8 @@ start --rerun NAME does that on purpose.
   --label KEY=VALUE   metadata shown by get and ls; KEY matches [a-z0-9._-]+
   --patch FILE        an overlay to snapshot, a regular file of at most 1 MiB;
                       repeatable, applied in order
+  --stdin FILE        a headless dsh's stdin to snapshot, a regular file of at
+                      most 1 MiB, or - for this command's stdin
   --timeout SECONDS   how long a foreground run follows its task; default 180
   --json, --text      the output format";
 

@@ -39,7 +39,9 @@
 - Native accounting counters under `get.resources`, with lane history
   available directly from journald lifecycle records.
 - Labels on instances, set by `run --label` and `label`; each `ls` entry
-  shows them.
+  shows them. `run` sets them on an existing instance only once it started
+  or runs already, so a run refused as `task-already-ran` or `unit-masked`,
+  or one whose start fails, leaves them as they were.
 - A run's own profile and overlays: the `--patch` flags DSH's launcher
   takes before the app's arguments are part of the recorded argv, so every
   start applies them, a different overlay under an existing name is

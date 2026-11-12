@@ -58,7 +58,8 @@ const RUN: &str = r"Usage: dshd run [--bg] [--name NAME] [--release RELEASE] [--
 
 Creates an instance that runs `dsh DSH ARGUMENTS` in DIR with this shell's
 environment, as the unit dshd@NAME, and starts it. A NAME that exists with
-the same recipe is started and its labels are set; one with a different
+the same recipe is started and then its labels are set, so a run that is
+refused or fails to start leaves them as they were; one with a different
 recipe is refused. The recipe is the directory, the arguments, the profile,
 the transport, the content of each --patch FILE, and the release when
 --release is given. An instance that runs already is reported, not

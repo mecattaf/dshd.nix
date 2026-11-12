@@ -84,6 +84,12 @@ pub(super) fn status_page(report: &StatusReport) -> String {
     if let Some(profile) = &report.profile {
         page.field("profile", &profile_text(profile));
     }
+    for patch in &report.patches {
+        page.field(
+            &format!("patch {}", patch.file),
+            &format!("sha256 {} from {}", patch.sha256, patch.source),
+        );
+    }
     if let Some(web) = &report.web {
         let url = web
             .url

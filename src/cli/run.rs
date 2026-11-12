@@ -1,13 +1,15 @@
 //! `dshd run ... -- DSH ARGUMENTS`: resolve the recipe (release, cwd, the
-//! argv as typed and the profile it selects, environment capture, the
-//! transport the live profile selects), create the instance or match the
-//! stored one, and start it. A web or acp instance, or any with `--bg`, is
+//! argv as typed and the profile it selects, the `--patch` overlays read
+//! for their snapshots, environment capture, the transport the live
+//! profile selects), create the instance or match the stored one, and
+//! start it. A web or acp instance, or any with `--bg`, is
 //! left running; a headless one runs in the foreground until its task ends
 //! or the timeout passes.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use super::follow;
 use super::lifecycle;
@@ -15,13 +17,13 @@ use super::status::{self, Shown};
 use crate::cli::report::OutcomeSlug;
 use crate::cli::{Asked, Context, RunArgs};
 use crate::error::Error;
-use crate::fsx::{self, Lock};
-use crate::instance::{self, CreateRequest, Instance};
+use crate::fsx::{self, Bounded, Lock};
+use crate::instance::{self, CreateRequest, Instance, PatchSource};
 use crate::launch;
 use crate::name;
 use crate::out;
 use crate::profile;
-use crate::record::{OsText, ProfileRef, Transport};
+use crate::record::{OsText, ProfileRef, RunPatch, Transport};
 use crate::release;
 use crate::tool::Tool;
 
@@ -91,6 +93,7 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool, Option
     let client: BTreeMap<OsString, OsString> = ctx.environment.iter().cloned().collect();
     let dsh_home = launch::resolve_dsh_home(&client, &ctx.home, &cwd);
     let selected = launch::selected_profile(&args.argv)?;
+    let patches = read_patches(&ctx.cwd, &args.patches)?;
     let dsh = Tool::at("dsh", release.path.join(name::RELEASE_DSH));
     let loaded = if args.name.is_none() {
         ctx.systemctl.list_loaded_instances()?
@@ -124,6 +127,7 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool, Option
         release_given,
         cwd,
         args: args.argv.clone(),
+        patches,
         environment,
         profile: ProfileRef {
             name: selected,
@@ -142,6 +146,36 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool, Option
     Ok((lock, instance, created, several_apps))
 }
 
+/// Reads each `--patch PATH` for its snapshot, in the order given. A
+/// relative PATH is the client's, so it is resolved against the client's
+/// working directory; the record keeps it as given. Anything but a
+/// readable regular file of at most 1 MiB is refused, naming PATH.
+fn read_patches(cwd: &Path, paths: &[PathBuf]) -> Result<Vec<PatchSource>, Error> {
+    let mut sources = Vec::with_capacity(paths.len());
+    for (index, path) in paths.iter().enumerate() {
+        let refuse = |reason: String| Error::PatchUnreadable {
+            path: path.display().to_string(),
+            reason,
+        };
+        let bytes = match fsx::read_bounded(&cwd.join(path), RunPatch::MAX_BYTES) {
+            Ok(Bounded::File(bytes)) => bytes,
+            Ok(Bounded::NotRegular) => return Err(refuse("not a regular file".into())),
+            Ok(Bounded::TooLarge) => return Err(refuse("larger than 1 MiB".into())),
+            Err(Error::Io { source, .. }) => {
+                return Err(refuse(match source.kind() {
+                    io::ErrorKind::NotFound => "no such file".into(),
+                    io::ErrorKind::PermissionDenied => "permission denied".into(),
+                    _ => source.to_string(),
+                }));
+            }
+            Err(other) => return Err(other),
+        };
+        let patch = RunPatch::of(index, &bytes, OsText::new(path.as_os_str()));
+        sources.push(PatchSource { patch, bytes });
+    }
+    Ok(sources)
+}
+
 /// The warning for a profile that lists more than one app bundle. DSH
 /// composes every bundle a profile lists into one tree, so the apps are
 /// mounted together and each layer's rows apply to the others; dshd holds
@@ -156,4 +190,60 @@ fn several_apps_warning(profile: &str, detected: &profile::Detected) -> Option<S
             detected.transport.slug(),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+    use crate::fsx::testing::Scratch;
+
+    fn refused(cwd: &Path, path: &str) -> String {
+        match read_patches(cwd, &[PathBuf::from(path)]) {
+            Err(error @ Error::PatchUnreadable { .. }) => {
+                assert_eq!((error.kind(), error.exit_code()), ("invalid-argument", 2));
+                let hint = error.hint().unwrap_or_default();
+                assert!(hint.contains(path), "the hint names {path}: {hint}");
+                error.to_string()
+            }
+            other => panic!("{path}: {other:?}"),
+        }
+    }
+
+    // catches: an overlay that is missing, a directory or over 1 MiB snapshotted, a relative path read from
+    // anywhere but the client's directory, or the snapshots named out of the order given
+    #[test]
+    fn run_patch_refuses_missing_directory_or_oversized() {
+        let scratch = Scratch::new("run-patch");
+        let cwd = scratch.path();
+        fs::create_dir(cwd.join("dir")).unwrap();
+        let limit = usize::try_from(RunPatch::MAX_BYTES).unwrap();
+        fs::write(cwd.join("big.yml"), vec![b'#'; limit + 1]).unwrap();
+        fs::write(cwd.join("full.yml"), vec![b'#'; limit]).unwrap();
+        fs::write(cwd.join("a.yml"), "a: 1\n").unwrap();
+
+        assert!(refused(cwd, "absent.yml").ends_with("no such file"));
+        assert!(refused(cwd, "dir").ends_with("not a regular file"));
+        assert!(refused(cwd, "big.yml").ends_with("larger than 1 MiB"));
+
+        let paths = [PathBuf::from("a.yml"), cwd.join("full.yml")];
+        let read = read_patches(cwd, &paths).unwrap();
+        let [first, second] = read.as_slice() else {
+            panic!("{read:?}")
+        };
+        assert_eq!(first.bytes, b"a: 1\n");
+        assert_eq!(first.patch.source, OsText::from("a.yml"));
+        assert_eq!(first.patch.sha256, RunPatch::digest(b"a: 1\n"));
+        assert_eq!(
+            first.patch.file,
+            format!("00-{}.yml", first.patch.sha256.get(..16).unwrap())
+        );
+        assert!(
+            second.patch.file.starts_with("01-"),
+            "{}",
+            second.patch.file
+        );
+        assert_eq!(second.bytes.len(), limit, "exactly 1 MiB is taken");
+    }
 }

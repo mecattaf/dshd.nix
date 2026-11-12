@@ -33,6 +33,9 @@ system configuration supplies `dsh`, and dshd runs the release it is given.
   you deliberately update and stop or restart it.
 - dshd only launches DSH. An instance runs its DSH profile live from its
   DSH home, with the argv as typed, and dshd writes nothing in that home.
+- `run --patch FILE` snapshots an overlay into the instance: every start
+  hands `dsh` that copy, so a changed or deleted FILE never changes an
+  instance, and the same name with other content is a different recipe.
 - Web instances keep their origin and default port across restarts;
   `attach --print-url` gives the current login token. ACP instances keep
   their sessions across controllers: a client can detach mid-turn and
@@ -45,7 +48,8 @@ system configuration supplies `dsh`, and dshd runs the release it is given.
 
 ```
 %S/dshd/NAME/
-  instance.json   the recipe (0600): id, release name, cwd, args, environment, profile, transport, labels
+  instance.json   the recipe (0600): id, release name, cwd, args, patches, environment, profile, transport, labels
+  patches/        the run --patch snapshots (0700), NN-SHA256PREFIX.yml (0600), only when given
   last-run.json   how the current or last run started and, once it ended, how it ended
   current         -> /nix/store/...-dshd-release-...   the release the next start uses (GC root)
   booted          -> /nix/store/...-dshd-release-...   the running release; current again after a stop (GC root)
@@ -301,8 +305,29 @@ They are part of the argv, so the recipe records them: every start,
 read live at that start, and `get` and `ls` show them as `profile` and
 `patches`. The same name with another profile or another overlay is a
 different recipe, refused with `exists-different-recipe`. DSH resolves a
-relative `--patch` against the instance's working directory. dshd has no
-`--patch` or `--transport` flag of its own.
+relative `--patch` against the instance's working directory, and reads the
+file again at every start. dshd has no `--transport` flag.
+
+**Snapshot overlays.** `dshd run --patch FILE` (before `--`, repeatable)
+makes the overlay part of the instance instead of a path in its argv, as in
+`dshd run --bg --patch ./fast.yml --name task-7 -- worker "summarise the open issues"`.
+At creation dshd copies each FILE, a readable regular file of at most
+1 MiB (a relative FILE is yours, from the current directory), to
+`%S/dshd/NAME/patches/NN-SHA256PREFIX.yml` and records its sha256 in the
+recipe; anything else is `invalid-argument`, naming FILE. Every start,
+`restart`, `update` and `start --rerun` included, hands `dsh` the copies as
+`--patch` right after the profile, in the order given, so the `--patch`
+flags typed after the profile in DSH's arguments still win. FILE is never
+read again: deleting or editing it changes no instance. Running the same
+name again with an overlay whose content differs, or in another order, is
+`exists-different-recipe`; the same content from another path is the same
+recipe. A start refuses a copy that no longer holds the recorded content.
+`get` lists the copies as `patches` (`file`, `sha256`, `source`), beside
+`profile.patches`, the overlays typed in the argv; `rm` removes them with
+the instance. An instance made without `--patch` keeps the record it
+always had; one made with it carries the `patches` key, which an older
+dshd does not know and refuses to act on, so after a rollback such an
+instance is recreated with `dshd rm NAME` and `run`.
 
 ### One configuration, several apps
 
@@ -320,7 +345,7 @@ dependencies. Put the shared settings in a bundle of your own, any package
 whose `package.json` has `dsh.bundle.patch`, or in the home layer
 `$DSH_HOME/cordis.patch.yml`, which DSH applies to every profile of the
 home; put what varies from task to task, such as a provider or a model, in
-a `--patch` of the run.
+a `--patch` of the run, or a snapshot made by `dshd run --patch FILE`.
 
 ## Releases, update and retention
 
@@ -562,7 +587,8 @@ line, or `{"error":{"kind":KIND,"message":TEXT,"hint":COMMAND|null}}`.
   `subState`, `result`, `mainPid`, `restarts`, `invocationId`, `since`),
   the recipe (`transport`, `cwd`, `args`, `environmentNames`, `labels`),
   `resources`, `release`, `profile` (`name`, `dshHome`, and `patches`, the
-  `--patch` overlays of the argv), `web` or `acp`, `lastRun`, `enabled`,
+  `--patch` overlays of the argv), `patches` (the `run --patch` snapshots:
+  `file`, `sha256`, `source`), `web` or `acp`, `lastRun`, `enabled`,
   `linger` and `remedy`.
 - A mutating verb prints the status object plus `outcome` and `warnings`;
   `run` and `wait`, once they followed a run, add `exitCode`, `signal` and

@@ -119,6 +119,12 @@
             }
           ]
         },
+        "patches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/patch"
+          }
+        },
         "web": {
           "anyOf": [
             {
@@ -184,7 +190,8 @@
         "acp",
         "lastRun",
         "remedy",
-        "resources"
+        "resources",
+        "patches"
       ],
       "additionalProperties": false
     },
@@ -429,6 +436,12 @@
             }
           ]
         },
+        "patches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/patch"
+          }
+        },
         "web": {
           "anyOf": [
             {
@@ -496,7 +509,8 @@
         "acp",
         "lastRun",
         "remedy",
-        "resources"
+        "resources",
+        "patches"
       ],
       "additionalProperties": false
     },
@@ -759,6 +773,27 @@
       ],
       "additionalProperties": false
     },
+    "patch": {
+      "type": "object",
+      "description": "one run --patch snapshot in a status object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "sha256",
+        "source"
+      ],
+      "additionalProperties": false
+    },
     "web": {
       "type": "object",
       "properties": {
@@ -955,6 +990,12 @@
             "$ref": "#/$defs/osText"
           }
         },
+        "patches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/runPatch"
+          }
+        },
         "environment": {
           "type": "array",
           "items": {
@@ -1130,6 +1171,27 @@
       "required": [
         "name",
         "dshHome"
+      ],
+      "additionalProperties": false
+    },
+    "runPatch": {
+      "type": "object",
+      "description": "one run --patch snapshot in instance.json",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/osText"
+        }
+      },
+      "required": [
+        "file",
+        "sha256",
+        "source"
       ],
       "additionalProperties": false
     },

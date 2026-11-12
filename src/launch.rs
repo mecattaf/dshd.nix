@@ -1,7 +1,8 @@
 //! The launch recipe, as pure functions: finding the profile native argv
-//! selects by DSH's launcher grammar, the web flag injection, environment
-//! capture with the closed exclusion list, and the ordered composition of
-//! the child environment at every start.
+//! selects by DSH's launcher grammar, the injection of the `--patch`
+//! snapshots and of the web flags, environment capture with the closed
+//! exclusion list, and the ordered composition of the child environment at
+//! every start.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -195,6 +196,51 @@ pub fn selection(argv: &[OsString]) -> Result<Selection, Error> {
     let profile = profile
         .ok_or_else(|| refuse("no profile: give a profile word or --profile NAME".to_owned()))?;
     Ok(Selection { profile, patches })
+}
+
+/// Inserts `--patch SNAPSHOT` for each snapshot, in order, directly after
+/// the profile the argv selects (the profile word, or `--profile V`), so
+/// DSH applies them after the profile's own layer and before every
+/// `--patch` typed in the argv: the typed overlays win. When a typed
+/// `--patch` comes before `--profile V`, the snapshots go before it, for
+/// the same reason. Done at every start, like the web flags.
+pub fn insert_patches(args: &mut Vec<OsString>, snapshots: &[PathBuf]) {
+    if snapshots.is_empty() {
+        return;
+    }
+    let rest = args.split_off(patch_position(args).min(args.len()));
+    args.extend(
+        snapshots
+            .iter()
+            .flat_map(|snapshot| [OsString::from(PATCH_FLAG), snapshot.as_os_str().to_owned()]),
+    );
+    args.extend(rest);
+}
+
+/// Where [`insert_patches`] puts the snapshots: after the profile word,
+/// or after `--profile V` unless a typed `--patch` comes first.
+fn patch_position(args: &[OsString]) -> usize {
+    if args
+        .first()
+        .is_some_and(|token| !token.as_bytes().starts_with(b"-"))
+    {
+        return 1;
+    }
+    let mut index = 0;
+    let mut typed_patch = None;
+    while let Some(token) = args.get(index) {
+        let (flag, inline) = split_flag(token);
+        let width = if inline.is_some() { 1 } else { 2 };
+        match flag {
+            Some(PROFILE_FLAG) => return typed_patch.unwrap_or(index + width),
+            Some(PATCH_FLAG) => {
+                typed_patch.get_or_insert(index);
+            }
+            _ => break,
+        }
+        index += width;
+    }
+    typed_patch.unwrap_or(index)
 }
 
 /// For a web instance: appends `--no-open` unless present, and `--port N`

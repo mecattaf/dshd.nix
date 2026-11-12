@@ -1,0 +1,11 @@
+run
+--name
+snap
+--release
+%RELEASE%
+--patch
+./absent.yml
+--
+headless
+-p
+summarise the work directory

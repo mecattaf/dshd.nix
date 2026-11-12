@@ -9,6 +9,7 @@ use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest as _, Sha256};
 
 mod unknown;
 
@@ -137,6 +138,53 @@ pub struct ProfileRef {
     pub unrecognized: serde_json::Map<String, serde_json::Value>,
 }
 
+/// One `--patch PATH` overlay dshd snapshotted into the instance at
+/// creation: the copy under `%S/dshd/NAME/patches/` is what every start
+/// hands dsh, and its digest is part of the recipe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunPatch {
+    /// File name under `%S/dshd/NAME/patches/`.
+    pub file: String,
+    /// Lowercase hex sha256 of the snapshot.
+    pub sha256: String,
+    /// The path as given at creation; informational, never read again.
+    pub source: OsText,
+    /// Keys this version does not know; an acting reader refuses them.
+    #[serde(flatten)]
+    pub unrecognized: serde_json::Map<String, serde_json::Value>,
+}
+
+impl RunPatch {
+    /// The largest overlay `--patch` takes, in bytes (1 MiB).
+    pub const MAX_BYTES: u64 = 1 << 20;
+    /// Hex digits of the digest a snapshot's file name carries.
+    const NAME_DIGITS: usize = 16;
+
+    /// The snapshot of `bytes`, the `index`th overlay given, read from
+    /// `source`: named `<NN>-<first 16 hex digits of its sha256>.yml`, so
+    /// the names sort in the order the overlays were given.
+    pub fn of(index: usize, bytes: &[u8], source: OsText) -> Self {
+        let sha256 = Self::digest(bytes);
+        let short: String = sha256.chars().take(Self::NAME_DIGITS).collect();
+        Self {
+            file: format!("{index:02}-{short}.yml"),
+            sha256,
+            source,
+            unrecognized: serde_json::Map::new(),
+        }
+    }
+
+    /// The lowercase hex sha256 of `bytes`.
+    pub fn digest(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .flat_map(|byte| [byte >> 4, byte & 0x0f])
+            .filter_map(|nibble| char::from_digit(u32::from(nibble), 16))
+            .collect()
+    }
+}
+
 /// `instance.json`: the recipe, rewritten by labels and the update environment strip.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -150,9 +198,15 @@ pub struct InstanceRecord {
     pub release: String,
     /// Working directory `dsh` is started in.
     pub cwd: OsText,
-    /// Native `dsh` arguments as typed. Web defaults are injected
-    /// independently at each start.
+    /// Native `dsh` arguments as typed. Web defaults and the snapshotted
+    /// overlays are injected independently at each start.
     pub args: Vec<OsText>,
+    /// The `run --patch` overlays snapshotted at creation, in the order
+    /// given. Absent when there are none, so a record made without them
+    /// is written exactly as before; a reader that does not know the key
+    /// finds it unrecognized and refuses to act.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patches: Vec<RunPatch>,
     /// The environment captured at create time, after the closed exclusion
     /// list and the release's `unsetEnvironment` were applied.
     pub environment: Vec<EnvVar>,
@@ -275,6 +329,26 @@ pub fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // catches: a snapshot digest that is not sha256 in lowercase hex, or a file name that does not sort in the
+    // order the overlays were given
+    #[test]
+    fn run_patch_digest_and_name() {
+        assert_eq!(
+            RunPatch::digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            RunPatch::digest(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let patch = RunPatch::of(3, b"abc", OsText::from("p.yml"));
+        assert_eq!(patch.file, "03-ba7816bf8f01cfea.yml");
+        assert_eq!(
+            RunPatch::of(12, b"", OsText::from("q")).file,
+            "12-e3b0c44298fc1c14.yml"
+        );
+    }
 
     // catches: a transport named one way in records and JSON and another in messages and the human output
     #[test]

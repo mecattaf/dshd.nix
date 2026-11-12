@@ -35,6 +35,14 @@ fn usage_cases() -> Vec<(Error, &'static str, u8)> {
         ),
         (Error::CreateWithRun("web".into()), "invalid-argument", 2),
         (Error::PathPinned("x".into()), "invalid-argument", 2),
+        (
+            Error::PatchUnreadable {
+                path: "p.yml".into(),
+                reason: "no such file".into(),
+            },
+            "invalid-argument",
+            2,
+        ),
         (Error::NotFound("x".into()), "not-found", 3),
         (Error::ReleaseNotFound("x".into()), "release-not-found", 3),
     ]
@@ -172,6 +180,7 @@ fn known_variant(error: &Error) {
         | Error::NeedsTarget { .. }
         | Error::CreateWithRun(_)
         | Error::PathPinned(_)
+        | Error::PatchUnreadable { .. }
         | Error::NotFound(_)
         | Error::ReleaseNotFound(_)
         | Error::ReleaseInvalid { .. }

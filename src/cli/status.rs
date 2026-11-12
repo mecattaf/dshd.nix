@@ -12,8 +12,8 @@ use std::thread;
 
 use super::render;
 use crate::cli::report::{
-    LastRunReport, Outcome, OutcomeSlug, ProfileReport, ReleaseReport, RunExit, StateSlug,
-    StatusReport, WebReport,
+    LastRunReport, Outcome, OutcomeSlug, PatchReport, ProfileReport, ReleaseReport, RunExit,
+    StateSlug, StatusReport, WebReport,
 };
 use crate::cli::{Context, NameArgs};
 use crate::error::Error;
@@ -400,6 +400,7 @@ fn bare_report(
         labels: BTreeMap::new(),
         release: None,
         profile: None,
+        patches: Vec::new(),
         web: None,
         acp: None,
         last_run: None,
@@ -419,7 +420,7 @@ fn since(facts: &UnitFacts) -> Option<u64> {
 }
 
 /// The recorded recipe: identity, transport, cwd, argv, environment names,
-/// labels and the profile block.
+/// labels, the profile block and the `--patch` snapshots.
 fn fill_recipe(report: &mut StatusReport, instance: &Instance) {
     let record = &instance.record;
     report.id = Some(record.id.clone());
@@ -437,6 +438,15 @@ fn fill_recipe(report: &mut StatusReport, instance: &Instance) {
         dsh_home: record.profile.dsh_home.display(),
         patches: recorded_patches(&record.args),
     });
+    report.patches = record
+        .patches
+        .iter()
+        .map(|patch| PatchReport {
+            file: patch.file.clone(),
+            sha256: patch.sha256.clone(),
+            source: patch.source.display(),
+        })
+        .collect();
 }
 
 /// The `--patch` overlays of a recorded argv, by the launcher grammar that

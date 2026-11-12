@@ -31,6 +31,13 @@
   start applies them, a different overlay under an existing name is
   `exists-different-recipe`, and `get` shows them as `profile.patches`.
   Each `ls` entry shows `profile` and `patches`.
+- `run --patch FILE`, repeatable: dshd snapshots each overlay (a regular
+  file of at most 1 MiB) into `%S/dshd/NAME/patches/` at creation, records
+  its sha256 in the recipe and hands `dsh` the copy after the profile at
+  every start. A changed overlay under an existing name is
+  `exists-different-recipe`, a start refuses a copy whose content no longer
+  matches, and `get` shows the snapshots as `patches`. Instances made
+  without `--patch` keep their record byte for byte.
 - `run` warns about a profile that lists more than one app bundle, since
   DSH mounts every bundle a profile lists in one process.
 - `dshd-run`, the per-release runner: spawns `dsh` with the recorded argv,

@@ -40,6 +40,13 @@ pub enum Error {
     CreateWithRun(String),
     /// `update` on an instance created from a release store path.
     PathPinned(String),
+    /// `run --patch PATH` names no readable regular file of at most 1 MiB.
+    PatchUnreadable {
+        /// The path as given.
+        path: String,
+        /// Why it cannot be snapshotted.
+        reason: String,
+    },
     /// No such instance.
     NotFound(String),
     /// No such release in the registry.
@@ -170,9 +177,10 @@ impl Error {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::InvalidName { .. } => "invalid-name",
-            Self::InvalidArgument(_) | Self::CreateWithRun(_) | Self::PathPinned(_) => {
-                "invalid-argument"
-            }
+            Self::InvalidArgument(_)
+            | Self::CreateWithRun(_)
+            | Self::PathPinned(_)
+            | Self::PatchUnreadable { .. } => "invalid-argument",
             Self::NeedsTarget { .. } => "needs-target",
             Self::NotFound(_) => "not-found",
             Self::ReleaseNotFound(_) => "release-not-found",
@@ -210,7 +218,8 @@ impl Error {
             | Self::InvalidArgument(_)
             | Self::NeedsTarget { .. }
             | Self::CreateWithRun(_)
-            | Self::PathPinned(_) => 2,
+            | Self::PathPinned(_)
+            | Self::PatchUnreadable { .. } => 2,
             Self::NotFound(_) | Self::ReleaseNotFound(_) => 3,
             Self::ExistsDifferentRecipe(_)
             | Self::InstanceRunning(_)
@@ -243,6 +252,9 @@ impl Error {
             Self::InvalidArgument(_) => Some("dshd help".into()),
             Self::NeedsTarget { .. } | Self::NotFound(_) => Some("dshd ls".into()),
             Self::CreateWithRun(argv) => Some(format!("dshd run --bg -- {argv}")),
+            Self::PatchUnreadable { path, .. } => Some(format!(
+                "--patch takes a readable regular file of at most 1 MiB; check {path}"
+            )),
             Self::ReleaseNotFound(_) => Some("ls /etc/dshd/releases".into()),
             Self::PathPinned(name) | Self::InconsistentState { name, .. } => Some(format!("dshd rm {name}")),
             Self::ExistsDifferentRecipe(diff) => Some(format!("dshd rm {}", diff.name)),
@@ -296,6 +308,7 @@ impl fmt::Display for Error {
                 f,
                 "{name} is pinned to a release path; remove it, then run it again with --release RELEASE"
             ),
+            Self::PatchUnreadable { path, reason } => write!(f, "--patch {path}: {reason}"),
             Self::NotFound(name) => write!(f, "no instance named {name}"),
             Self::ReleaseNotFound(name) => write!(f, "no release named {name}"),
             Self::ReleaseInvalid { release, reason } => {

@@ -227,6 +227,7 @@ impl Instance {
             release: RELEASE_NAME.to_owned(),
             cwd: OsText::new(self.path(WORK)),
             args: typed.into_iter().map(OsText::from).collect(),
+            patches: Vec::new(),
             environment: launch::capture_environment(&variables, &release_file.unset_environment),
             profile: ProfileRef {
                 name: selected,

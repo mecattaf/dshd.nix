@@ -64,6 +64,10 @@ impl ServiceManager for SystemdManager {
         &self.state_root
     }
 
+    fn config_root(&self) -> Result<PathBuf, Error> {
+        self.systemctl.config_root()
+    }
+
     fn runtime_dir(&self, name: &InstanceName) -> RuntimeDir {
         RuntimeDir::under(&self.runtime_root, name)
     }

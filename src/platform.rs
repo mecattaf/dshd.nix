@@ -68,6 +68,12 @@ pub trait ServiceManager: fmt::Debug {
     /// `~/.local/state` from the password database on macOS.
     fn state_root(&self) -> &StateRoot;
 
+    /// The user's configuration root, which holds the user release
+    /// registry (`<config root>/dshd/releases`): the user manager's `%E`
+    /// (`XDG_CONFIG_HOME`, else `~/.config`) on Linux, `~/.config` from the
+    /// password database on macOS.
+    fn config_root(&self) -> Result<PathBuf, Error>;
+
     /// The runtime directory of one instance's run: `%t/dshd/NAME` on
     /// Linux, `<instance>/run` on macOS.
     fn runtime_dir(&self, name: &InstanceName) -> RuntimeDir;

@@ -5,9 +5,12 @@
 //! runner still there after `ExitTimeOut`. The CLI wrote the stop intent
 //! into the run directory before calling this.
 
-use crate::error::Error;
+use std::time::Instant;
+
+use crate::error::{Error, ToolFailure};
 use crate::name::InstanceName;
-use crate::platform::launchd::{LaunchdManager, not_built};
+use crate::platform::launchd::LaunchdManager;
+use crate::platform::launchd::exit::{self, Failure};
 
 /// `stop NAME`:
 ///
@@ -21,8 +24,32 @@ use crate::platform::launchd::{LaunchdManager, not_built};
 ///    `status` `Some(0)` and a `stderr` saying the job was still loaded
 ///    after that many seconds. The CLI reports it as `stop-failed`.
 pub fn stop(manager: &LaunchdManager, name: &InstanceName) -> Result<(), Error> {
-    let _ = (manager, name);
-    Err(not_built("stop"))
+    let target = manager.service_target(name);
+    let args = ["bootout".to_owned(), target.clone()];
+    if let Err(error) = manager.call(&args) {
+        match exit::classify(error) {
+            Failure::NoSuchJob => return Ok(()),
+            Failure::Other(error) => return Err(error),
+        }
+    }
+    let deadline = Instant::now() + manager.stop_wait();
+    loop {
+        if manager.job(name)?.is_none() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(Error::Tool(Box::new(ToolFailure {
+                tool: "launchctl",
+                args: vec!["bootout".into(), target],
+                status: Some(0),
+                stderr: format!(
+                    "the job was still loaded {} seconds after bootout",
+                    manager.stop_wait().as_secs()
+                ),
+            })));
+        }
+        std::thread::sleep(manager.poll_interval());
+    }
 }
 
 #[cfg(test)]

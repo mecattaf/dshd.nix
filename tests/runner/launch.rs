@@ -3,6 +3,7 @@
 use super::*;
 
 /// Every retained run file and the poststop output must omit captured secrets.
+#[cfg(not(target_os = "macos"))]
 fn assert_secret_absent(instance: &Instance, journal: &str) -> TestResult {
     // catches: a recorded environment value that reaches the journal, last-run.json or a runtime file
     assert!(
@@ -45,8 +46,39 @@ fn assert_secret_absent(instance: &Instance, journal: &str) -> TestResult {
     Ok(())
 }
 
+/// Every file the run left (the launchd runner completes it itself, so
+/// there is no poststop) must omit captured secrets: `last-run.json`, the
+/// run's directory and its logs.
+#[cfg(target_os = "macos")]
+fn assert_secret_absent(instance: &Instance, journal: &str) -> TestResult {
+    // catches: a recorded environment value that reaches a run log, last-run.json or a run file
+    assert!(
+        !journal.contains(CANARY),
+        "an environment value reached the run's log:\n{journal}"
+    );
+    let mut files = vec![instance.dir().last_run_json()];
+    for dir in [
+        instance.runtime().path().to_path_buf(),
+        instance
+            .dir()
+            .path()
+            .join(dshd::platform::launchd::RUNS_DIR),
+    ] {
+        files.extend(entries(&dir)?.into_iter().map(|name| dir.join(name)));
+    }
+    for file in files {
+        let bytes = std::fs::read(&file)?;
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains(CANARY),
+            "an environment value reached {}",
+            file.display()
+        );
+    }
+    Ok(())
+}
+
 /// The captured, refreshed and runner-only groups reach the child with their documented meanings.
-fn assert_environment(instance: &Instance, log: &str, excluded: &[(&str, &str)]) {
+fn assert_environment(instance: &Instance, log: &str, excluded: &[(&str, &str)], invocation: &str) {
     let env = stub_env(log);
     let has = |line: String| env.contains(&line.as_str());
     assert!(
@@ -69,7 +101,7 @@ fn assert_environment(instance: &Instance, log: &str, excluded: &[(&str, &str)])
         "refreshed from the manager: {env:?}"
     );
     assert!(
-        has(format!("INVOCATION_ID={}", common::INVOCATION_ID)),
+        has(format!("INVOCATION_ID={invocation}")),
         "passed through from the runner: {env:?}"
     );
     assert!(
@@ -129,7 +161,7 @@ fn argv_and_environment_reach_dsh_verbatim_without_closed_list_names() -> TestRe
         log.contains(&format!("\ncwd {}\n", instance.path("work").display())),
         "dsh runs in the recorded cwd:\n{log}"
     );
-    assert_environment(&instance, &log, &excluded);
+    assert_environment(&instance, &log, &excluded, invocation(&ended));
     Ok(())
 }
 
@@ -172,7 +204,9 @@ fn explicit_ephemeral_port_is_preserved_with_and_without_an_old_pin() -> TestRes
 }
 
 // catches: dsh inheriting the runner's blocked stop signals, so it would sit out the SIGTERM a stop
-// sends it until the final SIGKILL (sys::unmask_on_exec)
+// sends it until the final SIGKILL (sys::unmask_on_exec). Linux only: the stub reads its mask from
+// /proc, and macOS shows no process's blocked mask; `sys::unmask_on_exec` is the same code there.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn dsh_starts_with_no_blocked_signals() -> TestResult {
     let instance = Instance::create("unmasked", &headless(&[]))?;

@@ -1,4 +1,8 @@
 //! Poststop records only observed ends and removes per-run state even on write failure.
+//! systemd's `ExecStopPost`, so Linux only; on macOS the launchd runner
+//! completes its own run (`completion.rs`).
+
+use std::os::unix::fs::PermissionsExt;
 
 use super::*;
 

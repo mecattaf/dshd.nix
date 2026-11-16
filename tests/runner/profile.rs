@@ -30,7 +30,10 @@ fn invocations(log: &str) -> Vec<&str> {
 }
 
 /// A start that was refused before dsh ran: the configuration status, the
-/// journal naming `reason`, no dsh, and no run recorded or booted.
+/// journal naming `reason`, no dsh, and no run recorded or booted. On
+/// macOS the runner then does what `poststop` does after a unit on Linux:
+/// it records the run's end (no child, status 78, under its own id) and
+/// moves `booted` to `current`.
 fn refused(instance: &Instance, reason: &str) -> TestResult {
     let ended = instance.start()?.end(false)?;
     assert_eq!(
@@ -45,11 +48,26 @@ fn refused(instance: &Instance, reason: &str) -> TestResult {
         ended.journal
     );
     assert_eq!(instance.stub_log()?, "", "dsh was never spawned");
-    assert!(
-        std::fs::symlink_metadata(instance.dir().booted()).is_err()
-            && dshd::instance::read_last_run(&instance.dir())?.is_none(),
-        "a refused start boots nothing and records no run"
-    );
+    if cfg!(target_os = "macos") {
+        let (run, end) = recorded(instance)?;
+        assert_eq!(run.invocation_id, invocation(&ended));
+        assert_eq!(
+            (end.child, end.exit_status.as_str()),
+            (None, "78"),
+            "{end:?}"
+        );
+        assert_eq!(
+            std::fs::read_link(instance.dir().booted())?,
+            std::fs::read_link(instance.dir().current())?,
+            "booted is current again"
+        );
+    } else {
+        assert!(
+            std::fs::symlink_metadata(instance.dir().booted()).is_err()
+                && dshd::instance::read_last_run(&instance.dir())?.is_none(),
+            "a refused start boots nothing and records no run"
+        );
+    }
     Ok(())
 }
 
@@ -106,7 +124,7 @@ fn a_missing_profile_is_materialised_by_dsh_before_the_start() -> TestResult {
     let env = stub_env(materialise);
     for expected in [
         format!("DSH_HOME={}", instance.path("dsh").display()),
-        format!("INVOCATION_ID={}", common::INVOCATION_ID),
+        format!("INVOCATION_ID={}", invocation(&ended)),
         "DSH_PERMISSION_MODE=danger-full-access".to_owned(),
     ] {
         assert!(env.contains(&expected.as_str()), "{expected}: {env:?}");

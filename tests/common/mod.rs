@@ -1,21 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
-// Adapted from herdr-core crates/herdr-core/tests/common/mod.rs @ ce81486; changes: keyed on the instance's HOME, bounded poll with POLL, SIGTERM through dshd::sys, no leak log file, assert instead of panic.
+// Adapted from herdr-core crates/herdr-core/tests/common/mod.rs @ ce81486; changes: keyed on the instance's HOME, bounded poll with POLL, SIGTERM through dshd::sys, no leak log file, assert instead of panic, the process table through libproc on macOS.
 //! Shared by `tests/runner.rs` and `tests/relay.rs`: one instance laid out
 //! on disk the way `dshd start` leaves it, under a private root, with the
 //! stub dsh as the release's `bin/dsh` and the built `dshd-run` as its
-//! runner; and the runner started outside systemd, from the release links,
-//! in the working directory and with the variables the unit template gives
-//! it. Every process a test starts for an instance carries that instance's
-//! `HOME`, which is how dropping the instance finds the ones left behind.
+//! runner; and the runner started outside the service manager, from the
+//! release links, in the working directory and with the variables the unit
+//! template gives it. Every process a test starts for an instance carries
+//! that instance's `HOME`, which is how dropping the instance finds the
+//! ones left behind: through `/proc` on Linux, through libproc and
+//! `KERN_PROCARGS2` (`dshd::sys`) on macOS.
+//!
+//! On macOS the runner takes the launchd path, as it does under a
+//! `LaunchAgent`: it locates its instance from its working directory (the
+//! private root here, never the home), keeps the run's files in
+//! `<instance>/run` (see [`Instance::runtime`]), names the run itself and
+//! writes its output to `<instance>/runs/<invocationId>.log`, which
+//! [`Running::end`] reads back as the run's journal. The relay clients
+//! (`attach`, `probe`) are started in the instance directory, from which
+//! they locate the relay as the CLI makes them do.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{self, Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -25,6 +36,7 @@ use dshd::name::{
     self, InstanceDir, InstanceName, RELEASE_DSH, RELEASE_FILE, RELEASE_RUNNER, RuntimeDir,
     StateRoot,
 };
+use dshd::platform::launchd;
 use dshd::record::{InstanceRecord, OsText, ProfileRef};
 use dshd::tool::Tool;
 use dshd::{fsx, instance, launch, profile, release, sys};
@@ -43,7 +55,9 @@ const BUILT_RUNNER: &str = env!("CARGO_BIN_EXE_dshd-run");
 const RELEASE_NAME: &str = "default";
 /// Mode of the instance record, as `dshd start` writes it.
 const RECORD_MODE: u32 = 0o600;
-/// What the runner is handed as `$INVOCATION_ID`, as systemd would.
+/// What the runner is handed as `$INVOCATION_ID`, as systemd would. The
+/// launchd runner (macOS) replaces it with an id of its own; see
+/// [`Ended::invocation`].
 pub(crate) const INVOCATION_ID: &str = "runner-test";
 /// One wait for a state change polls this often...
 const POLL: Duration = Duration::from_millis(20);
@@ -65,6 +79,8 @@ const RUN: &str = "run";
 const RELEASE: &str = "release";
 const STUB_LOG: &str = "stub.log";
 const JOURNAL: &str = "journal";
+/// The extension of a per-run log of the launchd runner.
+const RUN_LOG_EXTENSION: &str = "log";
 /// The file the stub waits for on a prompt that mentions "gate".
 pub(crate) const GATE: &str = "gate";
 
@@ -95,7 +111,7 @@ impl Instance {
     pub(crate) fn create(name: &str, spec: &Spec<'_>) -> TestResult<Self> {
         let name = InstanceName::parse(name)?;
         let seq = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
-        let scratch = std::env::temp_dir().join(format!(
+        let scratch = scratch_base().join(format!(
             "dshd-{}-{name}-{}-{seq}",
             env!("CARGO_CRATE_NAME"),
             process::id()
@@ -124,15 +140,30 @@ impl Instance {
         StateRoot::new(self.path(STATE)).instance(&self.name)
     }
 
-    /// `<root>/run/dshd/<name>`, the unit's runtime directory.
+    /// The run's own directory: `<root>/run/dshd/<name>`, the unit's
+    /// runtime directory, on Linux; `<instance>/run` on macOS, where the
+    /// launchd runner keeps it.
     pub(crate) fn runtime(&self) -> RuntimeDir {
-        RuntimeDir::under(&self.path(RUN), &self.name)
+        if cfg!(target_os = "macos") {
+            RuntimeDir::new(self.dir().path().join(launchd::RUN_DIR))
+        } else {
+            RuntimeDir::under(&self.path(RUN), &self.name)
+        }
+    }
+
+    /// `<instance>/runs`, the launchd runner's per-run logs (macOS).
+    fn runs(&self) -> PathBuf {
+        self.dir().path().join(launchd::RUNS_DIR)
     }
 
     /// `dshd-run VERB NAME` as the unit (`run` through `current`,
     /// `poststop` through `booted`) or the CLI (`attach` and `probe`
     /// through `booted`) invokes it, with the unit's working directory,
     /// runtime directory and invocation id, and nothing else inherited.
+    /// The working directory is the instance directory for every verb, as
+    /// the plist's `WorkingDirectory` is for `run` and the CLI's for the
+    /// relay clients on macOS; the launchd runner ignores
+    /// `$RUNTIME_DIRECTORY` and replaces `$INVOCATION_ID`.
     pub(crate) fn runner(&self, verb: &str) -> Command {
         let dir = self.dir();
         let program = if verb == "run" {
@@ -164,11 +195,16 @@ impl Instance {
     /// does.
     pub(crate) fn launch(&self, mut command: Command) -> TestResult<Running> {
         let journal = self.path(JOURNAL);
+        let runs = self.runs();
+        let earlier = run_logs(&runs)?;
         let file = File::options().create(true).append(true).open(&journal)?;
         let child = command.stdout(file.try_clone()?).stderr(file).spawn()?;
         Ok(Running {
             child: Some(child),
+            exited: None,
             journal,
+            runs,
+            earlier,
         })
     }
 
@@ -185,7 +221,12 @@ impl Instance {
         for dir in [WORK, HOME, "release/bin", "release/share/dshd"] {
             fs::create_dir_all(self.path(dir))?;
         }
-        fs::create_dir_all(self.runtime().path())?;
+        if cfg!(target_os = "macos") {
+            // As the launchd runner creates it.
+            fsx::create_dir_private(self.runtime().path())?;
+        } else {
+            fs::create_dir_all(self.runtime().path())?;
+        }
         symlink(STUB_DSH, release.join(RELEASE_DSH))?;
         symlink(BUILT_RUNNER, release.join(RELEASE_RUNNER))?;
         fs::copy(RELEASE_JSON, release.join(RELEASE_FILE))?;
@@ -248,20 +289,19 @@ impl Instance {
 impl Drop for Instance {
     // catches: a runner that exits while dsh or a dsh child still runs, or an attach client or runner a test left behind
     fn drop(&mut self) {
-        let mut needle = b"HOME=".to_vec();
-        needle.extend_from_slice(self.path(HOME).as_os_str().as_bytes());
-        needle.push(0);
-        let mut leaked = survivors(&needle);
+        let mut entry = b"HOME=".to_vec();
+        entry.extend_from_slice(self.path(HOME).as_os_str().as_bytes());
+        let mut leaked = survivors(&entry);
         let mut polls = 0;
         while leaked.as_ref().is_ok_and(|left| !left.is_empty()) && polls < LEAK_POLLS {
             thread::park_timeout(POLL);
-            leaked = survivors(&needle);
+            leaked = survivors(&entry);
             polls += 1;
         }
         let leaked = leaked.unwrap_or_else(|error| {
             vec![(
                 0,
-                format!("/proc cannot be read, so nothing was checked: {error}"),
+                format!("the process table cannot be read, so nothing was checked: {error}"),
             )]
         });
         for (pid, _) in &leaked {
@@ -280,9 +320,12 @@ impl Drop for Instance {
     }
 }
 
-/// The processes other than this one whose environment holds `needle`
-/// (one `NAME=VALUE` entry with its NUL), with their command lines.
-fn survivors(needle: &[u8]) -> io::Result<Vec<(u32, String)>> {
+/// The processes other than this one whose environment holds `entry`
+/// (one `NAME=VALUE`), with their command lines, from `/proc`.
+#[cfg(not(target_os = "macos"))]
+fn survivors(entry: &[u8]) -> io::Result<Vec<(u32, String)>> {
+    let mut needle = entry.to_vec();
+    needle.push(0);
     let me = process::id();
     let mut found = Vec::new();
     for entry in fs::read_dir("/proc")? {
@@ -298,7 +341,11 @@ fn survivors(needle: &[u8]) -> io::Result<Vec<(u32, String)>> {
         let Ok(environ) = fs::read(entry.path().join("environ")) else {
             continue;
         };
-        if pid != me && environ.windows(needle.len()).any(|window| window == needle) {
+        if pid != me
+            && environ
+                .windows(needle.len())
+                .any(|window| window == needle.as_slice())
+        {
             let cmdline = fs::read(entry.path().join("cmdline")).unwrap_or_default();
             found.push((
                 pid,
@@ -312,40 +359,153 @@ fn survivors(needle: &[u8]) -> io::Result<Vec<(u32, String)>> {
     Ok(found)
 }
 
+/// The processes other than this one whose environment holds `entry`
+/// (one `NAME=VALUE`), with their argument vectors: every pid through
+/// libproc, each one's environment through `KERN_PROCARGS2`, the macOS
+/// readings of `/proc` and `/proc/PID/environ`.
+#[cfg(target_os = "macos")]
+fn survivors(entry: &[u8]) -> io::Result<Vec<(u32, String)>> {
+    let me = process::id();
+    let pids = sys::all_pids().map_err(|error| io::Error::other(error.to_string()))?;
+    let mut found = Vec::new();
+    for pid in pids {
+        // A process that exited meanwhile, a zombie, or another user's, is no survivor of ours.
+        let Some(started) = sys::process_arguments(pid) else {
+            continue;
+        };
+        if pid != me
+            && started
+                .environment
+                .iter()
+                .any(|held| held.as_bytes() == entry)
+        {
+            let argv: Vec<_> = started
+                .argv
+                .iter()
+                .map(|arg| arg.to_string_lossy())
+                .collect();
+            found.push((pid, argv.join(" ")));
+        }
+    }
+    Ok(found)
+}
+
+/// Where the scratch roots go: the temporary directory, except on macOS,
+/// whose per-user `$TMPDIR` under `/var/folders` is long enough to push
+/// the relay socket of an instance under it past `sun_path`'s 104 bytes,
+/// which the tests' own raw connections do not work around.
+fn scratch_base() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        PathBuf::from("/tmp")
+    } else {
+        std::env::temp_dir()
+    }
+}
+
+/// The names of the per-run logs in `runs` (none when it does not exist).
+fn run_logs(runs: &Path) -> io::Result<BTreeSet<OsString>> {
+    let entries = match fs::read_dir(runs) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        entries => entries?,
+    };
+    let mut logs = BTreeSet::new();
+    for entry in entries {
+        let entry = entry?;
+        // `latest.log` is a link to one of them.
+        let path = entry.path();
+        if entry.file_type()?.is_file()
+            && path
+                .extension()
+                .is_some_and(|extension| extension == RUN_LOG_EXTENSION)
+        {
+            logs.insert(entry.file_name());
+        }
+    }
+    Ok(logs)
+}
+
 /// A started runner. Dropping one that was not ended stops it, and kills
 /// it when it does not stop.
 pub(crate) struct Running {
     child: Option<Child>,
+    /// The exit status, once [`Running::exited`] saw it.
+    exited: Option<ExitStatus>,
     journal: PathBuf,
+    /// The launchd runner's per-run logs, and those that were there
+    /// before it started.
+    runs: PathBuf,
+    earlier: BTreeSet<OsString>,
 }
 
-/// How a runner ended: its exit code (none when killed by a signal) and
-/// everything it and dsh wrote, as the journal would hold it.
+/// How a runner ended: its exit code (none when killed by a signal),
+/// everything it and dsh wrote, as the journal would hold it, and the
+/// invocation id of each run it made.
 pub(crate) struct Ended {
     pub(crate) status: Option<i32>,
     pub(crate) journal: String,
+    /// [`INVOCATION_ID`] on Linux; on macOS the ids the launchd runner
+    /// chose, oldest first.
+    pub(crate) invocations: Vec<String>,
 }
 
 impl Running {
     /// Waits for the runner to exit, after a SIGTERM (`systemctl stop`)
     /// when `stop` is set.
     pub(crate) fn end(mut self, stop: bool) -> TestResult<Ended> {
-        let child = self.child.as_mut().ok_or("the runner has already ended")?;
-        if stop {
-            sys::kill(child.id(), sys::SIGTERM)?;
+        if !self.exited()? {
+            let child = self.child.as_mut().ok_or("the runner has already ended")?;
+            if stop {
+                sys::kill(child.id(), sys::SIGTERM)?;
+            }
+            self.exited = Some(exit_status(child)?);
         }
-        let status = exit_status(child)?;
+        let status = self.exited.ok_or("the runner did not exit")?;
         self.child = None;
+        let (journal, invocations) = self.output()?;
         Ok(Ended {
             status: status.code(),
-            journal: fs::read_to_string(&self.journal)?,
+            journal,
+            invocations,
         })
+    }
+
+    /// Whether the runner has exited, without waiting for it.
+    pub(crate) fn exited(&mut self) -> TestResult<bool> {
+        let child = self.child.as_mut().ok_or("the runner has already ended")?;
+        if self.exited.is_none() {
+            self.exited = child.try_wait()?;
+        }
+        Ok(self.exited.is_some())
+    }
+
+    /// The runner's own output, then on macOS each run log this runner
+    /// made, oldest first, as `launchd.log` and the run's journal would
+    /// hold them; and the invocation id of each run.
+    fn output(&self) -> TestResult<(String, Vec<String>)> {
+        let mut journal = fs::read_to_string(&self.journal)?;
+        if !cfg!(target_os = "macos") {
+            return Ok((journal, vec![INVOCATION_ID.to_owned()]));
+        }
+        let mut made = Vec::new();
+        for name in run_logs(&self.runs)?.difference(&self.earlier) {
+            let path = self.runs.join(name);
+            let metadata = fs::metadata(&path)?;
+            made.push((metadata.created().or_else(|_| metadata.modified())?, path));
+        }
+        made.sort();
+        let mut invocations = Vec::new();
+        for (_, path) in made {
+            journal.push_str(&fs::read_to_string(&path)?);
+            let id = path.file_stem().and_then(|stem| stem.to_str());
+            invocations.push(id.ok_or("a run log whose name is not an id")?.to_owned());
+        }
+        Ok((journal, invocations))
     }
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
-        let Some(child) = self.child.as_mut() else {
+        let Some(child) = self.child.as_mut().filter(|_| self.exited.is_none()) else {
             return;
         };
         // Asked first, the runner takes dsh down with it.

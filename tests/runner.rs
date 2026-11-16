@@ -1,27 +1,32 @@
-//! The runner outside systemd, with the stub dsh: the web announcement and
-//! its pinned port, readiness that is never reported for a start that
-//! cannot be attached, the ACP relay's handshake and probe, the exit status
-//! table end to end, the refusals before anything is spawned, `poststop`
-//! and the stop it records, the argv, environment and signal mask dsh
-//! receives, and the live profile at every start.
+//! The runner outside the service manager, with the stub dsh: the web
+//! announcement and its pinned port, readiness that is never reported for
+//! a start that cannot be attached, the ACP relay's handshake and probe,
+//! the exit status table end to end, the refusals before anything is
+//! spawned, the completion of a run and the stop it records (`poststop`
+//! on Linux, the launchd runner itself on macOS), the argv, environment
+//! and signal mask dsh receives, and the live profile at every start.
 
 mod common;
 
+#[cfg(target_os = "macos")]
+#[path = "runner/completion.rs"]
+mod completion;
 #[path = "runner/launch.rs"]
 mod launch;
+#[cfg(not(target_os = "macos"))]
 #[path = "runner/poststop.rs"]
 mod poststop;
 #[path = "runner/profile.rs"]
 mod profile;
 mod tree;
 
-use std::io::{self, BufRead, BufReader, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::os::unix::net::{UnixDatagram, UnixStream};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::MetadataExt;
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
 
-use common::{Instance, Spec, TestResult, wait_for};
+use common::{Ended, Instance, Spec, TestResult, wait_for};
 use dshd::record::LastRun;
 use dshd::runner::{EXIT_CONFIG, RUN_ENDED, RUN_STARTED};
 
@@ -39,6 +44,13 @@ fn headless<'a>(env: &'a [(&'a str, &'a str)]) -> Spec<'a> {
         args: &[],
         env,
     }
+}
+
+/// The invocation id of a runner's last run: [`common::INVOCATION_ID`] on
+/// Linux, the one the launchd runner chose on macOS (empty when it made
+/// no run).
+fn invocation(ended: &Ended) -> &str {
+    ended.invocations.last().map_or("", String::as_str)
 }
 
 /// The ports the stub announced, in order (`web PID PORT` lines).
@@ -72,7 +84,8 @@ fn first_argv(log: &str) -> TestResult<Vec<String>> {
 
 /// `dshd-run poststop NAME` with what systemd hands `ExecStopPost` after
 /// the run ended `SERVICE_RESULT`/`EXIT_CODE`/`EXIT_STATUS`.
-fn poststop(instance: &Instance, ended: [&str; 3]) -> io::Result<std::process::Output> {
+#[cfg(not(target_os = "macos"))]
+fn poststop(instance: &Instance, ended: [&str; 3]) -> std::io::Result<std::process::Output> {
     let [result, code, status] = ended;
     instance
         .runner("poststop")
@@ -82,7 +95,8 @@ fn poststop(instance: &Instance, ended: [&str; 3]) -> io::Result<std::process::O
         .output()
 }
 
-/// `last-run.json` with its end, as poststop completed it.
+/// `last-run.json` with its end, as poststop (or the launchd runner)
+/// completed it.
 fn recorded(instance: &Instance) -> TestResult<(LastRun, dshd::record::RunEnd)> {
     let mut run = dshd::instance::read_last_run(&instance.dir())?.ok_or("no last-run.json")?;
     let end = run.end.take().ok_or("last-run.json has no end")?;
@@ -145,8 +159,9 @@ fn web_port_pinned_across_restart_and_token_never_in_journal() -> TestResult {
     wait_for("the second announcement", || {
         Ok(announced_ports(&instance.stub_log()?).len() == 2)
     })?;
+    // The launchd runner removes the file at the end of a run; the next one writes it again.
     wait_for("this process's fresh URL", || {
-        Ok(std::fs::read_to_string(&url_file)? != url)
+        Ok(std::fs::read_to_string(&url_file).is_ok_and(|now| now != url))
     })?;
     let fresh_url = std::fs::read_to_string(&url_file)?;
     assert_ne!(
@@ -174,7 +189,8 @@ fn web_port_pinned_across_restart_and_token_never_in_journal() -> TestResult {
 }
 
 // catches: a crash after readiness that does not ask for a restart, a child status 75 passed through as a
-// restart request, or a failure reported as success (P1.7)
+// restart request, or a failure reported as success (P1.7); on macOS, a crash after readiness that the
+// runner does not restart in place, under the same job, as a new run
 #[test]
 fn crash_and_failure_exit_statuses_end_to_end() -> TestResult {
     let cases: [(&str, &str, Option<&str>, i32); 5] = [
@@ -202,12 +218,33 @@ fn crash_and_failure_exit_statuses_end_to_end() -> TestResult {
                 env: &env,
             },
         )?;
-        let ended = instance.start()?.end(false)?;
+        let running = instance.start()?;
+        let restarts_in_place = cfg!(target_os = "macos") && mode == Some("crash-after-ready");
+        let (ended, expected) = if restarts_in_place {
+            // launchd restarts nothing: the runner asks itself, and runs dsh again once its pause is
+            // over. Stopped while the second run is ready, the web instance exits 0.
+            wait_for("the restart in place", || {
+                Ok(announced_ports(&instance.stub_log()?).len() == 2
+                    && instance.runtime().web_url().exists())
+            })?;
+            (running.end(true)?, 0)
+        } else {
+            (running.end(false)?, expected)
+        };
         assert_eq!(ended.status, Some(expected), "{name}:\n{}", ended.journal);
         assert!(
             instance.stub_log()?.contains("invocation "),
             "{name}: dsh was spawned"
         );
+        if restarts_in_place {
+            assert_eq!(ended.invocations.len(), 2, "{name}:\n{}", ended.journal);
+            for said in [
+                "status 75 asks for a restart",
+                "this run continues the job after its runner restarted it",
+            ] {
+                assert!(ended.journal.contains(said), "{said}:\n{}", ended.journal);
+            }
+        }
         if mode == Some("crash-after-ready") {
             // catches: dsh's last output dropped or logged after the runner's account of its end
             let said = ended
@@ -282,8 +319,12 @@ fn unknown_record_key_is_refused_before_spawn() -> TestResult {
 }
 
 // catches: a start reported ready that cannot be attached (Q14)
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn web_start_without_its_announcement_is_never_ready() -> TestResult {
+    use std::io;
+    use std::os::unix::net::UnixDatagram;
+
     let instance = Instance::create(
         "unannounced",
         &Spec {
@@ -330,6 +371,51 @@ fn web_start_without_its_announcement_is_never_ready() -> TestResult {
         !messages.iter().any(|message| message.contains("READY=1")),
         "readiness was reported: {messages:?}"
     );
+    Ok(())
+}
+
+// catches: a start reported ready that cannot be attached (Q14): under launchd the phase of
+// `run/state.json` is the readiness the CLI waits for, and it must never read `ready`
+#[cfg(target_os = "macos")]
+#[test]
+fn web_start_without_its_announcement_is_never_ready() -> TestResult {
+    use dshd::platform::launchd::runstate::{self, Phase};
+
+    let instance = Instance::create(
+        "unannounced",
+        &Spec {
+            profile: "web",
+            args: &[],
+            env: &[],
+        },
+    )?;
+    // A directory where the URL file goes: the announcement cannot be recorded.
+    std::fs::create_dir(instance.runtime().web_url())?;
+    let mut running = instance.start()?;
+    let mut phases = Vec::new();
+    while !running.exited()? {
+        if let Some(state) = runstate::read(&instance.runtime())?
+            && phases.last() != Some(&state.phase)
+        {
+            phases.push(state.phase);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let ended = running.end(false)?;
+    assert_eq!(
+        ended.status,
+        Some(i32::from(EXIT_CONFIG)),
+        "{}",
+        ended.journal
+    );
+    assert!(
+        ended
+            .journal
+            .contains("the start cannot be attached, so dsh is stopped"),
+        "{}",
+        ended.journal
+    );
+    assert!(!phases.contains(&Phase::Ready), "{phases:?}");
     Ok(())
 }
 

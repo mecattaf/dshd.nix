@@ -46,6 +46,8 @@ fn stop_lets_dsh_answer_before_the_controller_is_closed() -> TestResult {
 
     let ended = running.end(true)?;
     assert_eq!(ended.status, Some(0), "{}", ended.journal);
+    // catches: a stopped run that the launchd runner restarts in place (macOS)
+    assert_eq!(ended.invocations.len(), 1, "{}", ended.journal);
     let (last_words, _) = client.until(|frame| text_of(frame).is_some())?;
     assert_eq!(
         text_of(&last_words),
@@ -104,6 +106,7 @@ fn cancel_is_forwarded_not_answered() -> TestResult {
 }
 
 /// A real blocked pipe writer proves the stop races a wedged ACP stdin, without a sleep.
+#[cfg(target_os = "linux")]
 fn pipe_writer_waits(runner: u32) -> TestResult<bool> {
     for task in std::fs::read_dir(format!("/proc/{runner}/task"))? {
         let path = task?.path().join("wchan");
@@ -114,7 +117,9 @@ fn pipe_writer_waits(runner: u32) -> TestResult<bool> {
     Ok(false)
 }
 
-// catches: stop blocking behind a controller's full write to dsh's wedged stdin, preventing main-thread reaping
+// catches: stop blocking behind a controller's full write to dsh's wedged stdin, preventing main-thread reaping.
+// Linux only: it finds the blocked writer through /proc (`wchan`), which macOS has no reading of.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_wedged_child_stdin_uses_the_supervisors_signal_fallback() -> TestResult {
     let instance = Instance::create(

@@ -12,6 +12,9 @@
 #   DSH_STUB_LOG    file each invocation appends its record to
 #   DSH_STUB_GATE   acp: a prompt containing "gate" waits until this file
 #                   exists, then removes it
+#   DSH_STUB_ANNOUNCE_AFTER_GATE
+#                   web, when 1: the announcement waits for DSH_STUB_GATE
+#                   the same way
 #   DSH_STUB_DELAY  headless: seconds to sleep after printing, before the
 #                   exit, so a task is still running when a check looks
 #   DSH_STUB_BACKGROUND
@@ -220,6 +223,9 @@ serve_web() {
 		while listening "$port"; do
 			port=$((port + 1))
 		done
+	fi
+	if [ "${DSH_STUB_ANNOUNCE_AFTER_GATE:-}" = 1 ]; then
+		wait_gate
 	fi
 	log "web $$ $port"
 	printf 'dsh web: http://127.0.0.1:%s/?token=stub%s\n' "$port" "$$"

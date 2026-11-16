@@ -379,6 +379,7 @@ fn web_start_without_its_announcement_is_never_ready() -> TestResult {
 #[cfg(target_os = "macos")]
 #[test]
 fn web_start_without_its_announcement_is_never_ready() -> TestResult {
+    use common::GATE;
     use dshd::platform::launchd::runstate::{self, Phase};
 
     let instance = Instance::create(
@@ -386,12 +387,19 @@ fn web_start_without_its_announcement_is_never_ready() -> TestResult {
         &Spec {
             profile: "web",
             args: &[],
-            env: &[],
+            env: &[("DSH_STUB_ANNOUNCE_AFTER_GATE", "1")],
         },
     )?;
-    // A directory where the URL file goes: the announcement cannot be recorded.
-    std::fs::create_dir(instance.runtime().web_url())?;
     let mut running = instance.start()?;
+    // A directory where the URL file goes: the announcement cannot be
+    // recorded. The runner clears a stale run's files as it begins, and
+    // one it cannot remove refuses the start before dsh runs, so the
+    // directory is made once dsh runs, which announces only then.
+    wait_for("dsh to start", || {
+        Ok(instance.stub_log()?.contains("invocation "))
+    })?;
+    std::fs::create_dir(instance.runtime().web_url())?;
+    std::fs::write(instance.path(GATE), "")?;
     let mut phases = Vec::new();
     while !running.exited()? {
         if let Some(state) = runstate::read(&instance.runtime())?

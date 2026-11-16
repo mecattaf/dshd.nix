@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::error::Error;
 use crate::name::{InstanceName, RuntimeDir, StateRoot, TEMPLATE_FILE};
-use crate::platform::{Action, ServiceManager};
+use crate::platform::{Action, RunLogs, ServiceManager};
 use crate::systemctl::{self, Systemctl, UnitFacts};
 use crate::tool::Tool;
 
@@ -127,6 +127,10 @@ impl ServiceManager for SystemdManager {
     fn failure_tail(&self, name: &InstanceName, lines: u32) -> Result<Vec<String>, Error> {
         self.systemctl
             .journal_tail(&self.journalctl, &name.unit(), lines)
+    }
+
+    fn run_logs(&self, _name: &InstanceName) -> RunLogs {
+        RunLogs::Journal
     }
 
     fn echo(&self, action: Action, name: &InstanceName) -> String {

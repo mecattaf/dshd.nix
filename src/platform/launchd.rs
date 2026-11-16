@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use crate::error::Error;
 use crate::name::{InstanceDir, InstanceName, RELEASE_RUNNER, RuntimeDir, StateRoot};
-use crate::platform::{Action, ServiceManager};
+use crate::platform::{Action, RunLogs, ServiceManager};
 use crate::systemctl::{ActiveState, Resources, UnitFacts};
 use crate::tool::Tool;
 
@@ -364,6 +364,10 @@ impl ServiceManager for LaunchdManager {
 
     fn failure_tail(&self, name: &InstanceName, lines: u32) -> Result<Vec<String>, Error> {
         logs::failure_tail(&self.runs_dir(name), &self.launchd_log(name), lines)
+    }
+
+    fn run_logs(&self, name: &InstanceName) -> RunLogs {
+        RunLogs::Files(self.runs_dir(name))
     }
 
     fn echo(&self, action: Action, name: &InstanceName) -> String {

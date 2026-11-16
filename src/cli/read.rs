@@ -1,10 +1,14 @@
 //! `dshd read NAME [-n LINES | --head LINES] [-f]`: the journal of the
 //! instance's current run, or of its last one, by the run's invocation id,
 //! as dsh wrote it, a line journald broke at `LineMax` joined again: its
-//! newest lines, or with `--head` its oldest. A note on
+//! newest lines, or with `--head` its oldest. Under launchd the run's log
+//! file `<instance>/runs/<invocationId>.log` takes the journal's place
+//! (`ServiceManager::run_logs`). A note on
 //! stderr says when the lines are not the whole run: they do not reach back
 //! to the runner's first line, or newer lines follow them; `-f` keeps
 //! printing until the run ends.
+
+use std::path::Path;
 
 use super::follow::{self, Since};
 use super::journal::{self, Entry, Joiner};
@@ -13,7 +17,10 @@ use crate::cli::report::ReadReport;
 use crate::cli::{Context, ReadArgs};
 use crate::error::Error;
 use crate::instance;
+use crate::name::InstanceName;
 use crate::out;
+use crate::platform::RunLogs;
+use crate::platform::launchd::logs;
 use crate::record::Transport;
 use crate::runner::RUN_STARTED;
 
@@ -25,14 +32,15 @@ pub(super) fn run(ctx: &Context, args: &ReadArgs) -> Result<(), Error> {
     let Some(id) = follow::invocation(&facts, &instance)? else {
         return Err(Error::NotRunning(name.to_string()));
     };
+    let kept = ctx.manager.run_logs(name);
     let Window {
         lines,
         from_start,
         newer,
-    } = if args.head {
-        oldest(ctx, &id, args.lines)?
-    } else {
-        newest(ctx, &id, args.lines)?
+    } = match &kept {
+        RunLogs::Journal if args.head => oldest(ctx, &id, args.lines)?,
+        RunLogs::Journal => newest(ctx, &id, args.lines)?,
+        RunLogs::Files(dir) => from_file(&logs::run_log(dir, &id), args.head, args.lines)?,
     };
     let complete = from_start && !newer;
     let acp = instance.record.transport == Transport::Acp;
@@ -54,10 +62,7 @@ pub(super) fn run(ctx: &Context, args: &ReadArgs) -> Result<(), Error> {
         out::error_line("[dshd] acp: stdout is the ACP channel; this is dsh's stderr");
     }
     if !from_start {
-        out::error_line(&format!(
-            "[dshd] incomplete: older output may be missing; the unit's whole journal: journalctl --user -u {}",
-            name.unit()
-        ));
+        out::error_line(&older_missing(&kept, name, &id));
     }
     if newer {
         out::error_line(&format!(
@@ -73,7 +78,23 @@ pub(super) fn run(ctx: &Context, args: &ReadArgs) -> Result<(), Error> {
     Ok(())
 }
 
+/// The note for lines that do not reach back to the run's first line,
+/// naming where the whole run is.
+fn older_missing(kept: &RunLogs, name: &InstanceName, id: &str) -> String {
+    match kept {
+        RunLogs::Journal => format!(
+            "[dshd] incomplete: older output may be missing; the unit's whole journal: journalctl --user -u {}",
+            name.unit()
+        ),
+        RunLogs::Files(dir) => format!(
+            "[dshd] incomplete: older output may be missing; the run's whole log: {}",
+            logs::run_log(dir, id).display()
+        ),
+    }
+}
+
 /// The lines `read` shows, and what they leave out.
+#[derive(Debug, PartialEq, Eq)]
 struct Window {
     lines: Vec<String>,
     /// The first line is the run's `dshd-run: run started` line.
@@ -167,6 +188,49 @@ fn oldest(ctx: &Context, id: &str, count: u32) -> Result<Window, Error> {
     })
 }
 
+/// The window of a run's log file (launchd), which holds whole lines, so
+/// nothing is joined. `--head` reads one line more than it shows, to tell
+/// whether newer lines follow and, for `--head 0`, whether the run's first
+/// line is there. A missing file (a log retention removed) is no lines,
+/// not from the start.
+fn from_file(path: &Path, head: bool, count: u32) -> Result<Window, Error> {
+    let window = if head {
+        logs::Window::Oldest(count.saturating_add(1))
+    } else {
+        logs::Window::Newest(count)
+    };
+    Ok(file_window(logs::read_window(path, window)?, head, count))
+}
+
+/// What [`from_file`] read, as the window `read` shows: the newest lines
+/// reach back to the run's first line when the file holds no more and the
+/// first is the runner's; the oldest are followed by newer ones when the
+/// file holds more than `count`.
+fn file_window(read: logs::Lines, head: bool, count: u32) -> Window {
+    let shown = usize::try_from(count).unwrap_or(usize::MAX);
+    let logs::Lines {
+        mut lines,
+        truncated,
+    } = read;
+    let starts = lines
+        .first()
+        .is_some_and(|line| line.starts_with(RUN_STARTED));
+    if !head {
+        return Window {
+            lines,
+            from_start: starts && !truncated,
+            newer: false,
+        };
+    }
+    let newer = truncated || lines.len() > shown;
+    lines.truncate(shown);
+    Window {
+        lines,
+        from_start: starts,
+        newer,
+    }
+}
+
 /// An ask as a count of entries.
 fn asked(ask: u32) -> usize {
     usize::try_from(ask).unwrap_or(usize::MAX)
@@ -188,4 +252,99 @@ fn capture(ctx: &Context, id: &str, entries: &str) -> Result<Vec<Entry>, Error> 
         .filter(|line| !line.is_empty())
         .map(Entry::parse)
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fsx::testing::Scratch;
+
+    fn read(lines: &[&str], truncated: bool) -> logs::Lines {
+        logs::Lines {
+            lines: lines.iter().map(|line| (*line).to_owned()).collect(),
+            truncated,
+        }
+    }
+
+    fn window(lines: &[&str], from_start: bool, newer: bool) -> Window {
+        Window {
+            lines: lines.iter().map(|line| (*line).to_owned()).collect(),
+            from_start,
+            newer,
+        }
+    }
+
+    // catches: a run log's newest lines called complete when the file holds older ones or the
+    // first line is not the runner's, or said to be followed by newer lines
+    #[test]
+    fn newest_lines_of_a_run_log() {
+        assert_eq!(
+            file_window(read(&[RUN_STARTED, "a", "b"], false), false, 5),
+            window(&[RUN_STARTED, "a", "b"], true, false)
+        );
+        assert_eq!(
+            file_window(read(&["a", "b"], true), false, 2),
+            window(&["a", "b"], false, false)
+        );
+        assert_eq!(
+            file_window(read(&["a", "b"], false), false, 2),
+            window(&["a", "b"], false, false),
+            "a log whose first line is not the runner's is not the whole run"
+        );
+        assert_eq!(
+            file_window(read(&[], false), false, 2),
+            window(&[], false, false),
+            "a removed log is not the whole run"
+        );
+    }
+
+    // catches: --head showing the extra line it read, missing the newer lines that follow, or
+    // losing whether the run's first line is there when it shows none (--head 0)
+    #[test]
+    fn oldest_lines_of_a_run_log() {
+        assert_eq!(
+            file_window(read(&[RUN_STARTED, "a", "b"], true), true, 2),
+            window(&[RUN_STARTED, "a"], true, true)
+        );
+        assert_eq!(
+            file_window(read(&[RUN_STARTED, "a"], false), true, 2),
+            window(&[RUN_STARTED, "a"], true, false)
+        );
+        assert_eq!(
+            file_window(read(&[RUN_STARTED], true), true, 0),
+            window(&[], true, true)
+        );
+        assert_eq!(
+            file_window(read(&[RUN_STARTED, "a", "b"], false), true, 2),
+            window(&[RUN_STARTED, "a"], true, true),
+            "the line read past the count is a newer one"
+        );
+    }
+
+    // catches: the launchd window not read from the run's own log file, or a partial last line
+    // shown
+    #[test]
+    #[ignore = "packet D09: per-run logs"]
+    fn a_run_log_file_is_read_whole_lines_only() {
+        let scratch = Scratch::new("read-run-log");
+        let path = scratch.path().join("0123456789abcdef0123456789abcdef.log");
+        std::fs::write(&path, format!("{RUN_STARTED}\none\ntwo\npart")).unwrap();
+        assert_eq!(
+            from_file(&path, false, 2).unwrap(),
+            window(&["one", "two"], false, false)
+        );
+        assert_eq!(
+            from_file(&path, true, 1).unwrap(),
+            window(&[RUN_STARTED], true, true)
+        );
+        assert_eq!(
+            from_file(&path, false, 10).unwrap(),
+            window(&[RUN_STARTED, "one", "two"], true, false)
+        );
+        let gone = scratch.path().join("gone.log");
+        assert_eq!(
+            from_file(&gone, false, 10).unwrap(),
+            window(&[], false, false)
+        );
+    }
 }

@@ -19,6 +19,10 @@ fn names_are_fixed() {
     assert_eq!(manager.plist_path(name), instance.join("launchd.plist"));
     assert_eq!(manager.launchd_log(name), instance.join("launchd.log"));
     assert_eq!(manager.runs_dir(name), instance.join("runs"));
+    assert_eq!(
+        manager.run_logs(name),
+        RunLogs::Files(instance.join("runs"))
+    );
     assert_eq!(manager.runtime_dir(name).path(), instance.join("run"));
     assert_eq!(
         manager.agent_copy(name),

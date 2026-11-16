@@ -49,8 +49,18 @@ pub struct Timebase {
 /// `None` usage (the reap gave none) is every field `None`.
 #[must_use]
 pub fn run_totals(usage: Option<EndUsage>) -> RunResources {
-    let _ = usage;
-    RunResources::default()
+    let Some(usage) = usage else {
+        return RunResources::default();
+    };
+    let cpu_usage_nsec = usage
+        .user_usec
+        .checked_add(usage.system_usec)
+        .and_then(|usec| usec.checked_mul(1_000));
+    RunResources {
+        cpu_usage_nsec,
+        memory_peak: Some(usage.max_rss_bytes),
+        ..RunResources::default()
+    }
 }
 
 /// `get.resources` summed over the live runner's process tree. Any
@@ -60,8 +70,44 @@ pub fn run_totals(usage: Option<EndUsage>) -> RunResources {
 /// peak for the whole tree). An empty tree is every field `None`.
 #[must_use]
 pub fn live_counters(samples: &[Option<TaskSample>], timebase: Option<Timebase>) -> Resources {
-    let _ = (samples, timebase);
-    Resources::default()
+    if samples.is_empty() {
+        return Resources::default();
+    }
+    let mut ticks: Option<u128> = Some(0);
+    let mut memory: Option<u64> = Some(0);
+    let mut tasks: Option<u64> = Some(0);
+    let mut io_read: Option<u64> = Some(0);
+    let mut io_written: Option<u64> = Some(0);
+    for sample in samples {
+        let Some(sample) = sample else {
+            return Resources::default();
+        };
+        ticks = ticks.and_then(|sum| {
+            sum.checked_add(u128::from(sample.user_ticks))
+                .and_then(|sum| sum.checked_add(u128::from(sample.system_ticks)))
+        });
+        memory = memory.and_then(|sum| sum.checked_add(sample.phys_footprint));
+        tasks = tasks.and_then(|sum| sum.checked_add(sample.threads));
+        io_read = io_read.and_then(|sum| sum.checked_add(sample.disk_read));
+        io_written = io_written.and_then(|sum| sum.checked_add(sample.disk_written));
+    }
+    let cpu_usage_nsec = match timebase {
+        Some(timebase) if timebase.denominator != 0 => ticks
+            .and_then(|sum| {
+                sum.checked_mul(u128::from(timebase.numerator))
+                    .map(|scaled| scaled / u128::from(timebase.denominator))
+            })
+            .and_then(|nsec| u64::try_from(nsec).ok()),
+        _ => None,
+    };
+    Resources {
+        cpu_usage_nsec,
+        memory_current: memory,
+        memory_peak: None,
+        tasks_current: tasks,
+        io_read_bytes: io_read,
+        io_write_bytes: io_written,
+    }
 }
 
 #[cfg(test)]

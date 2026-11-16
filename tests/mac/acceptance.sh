@@ -910,6 +910,9 @@ cleanup() {
 		rmdir "$state_root/.releases" 2>/dev/null || record 9 FAIL "the state root's .releases is removed" "not empty: $(entries_of "$state_root/.releases")"
 	fi
 	if [ "$state_root_existed" = 0 ] && [ -d "$state_root" ]; then
+		# The root lock every changing verb takes: dshd's own, not the
+		# prefix's, so it goes with a state root the kit brought into being.
+		[ ! -f "$state_root/lock" ] || [ -L "$state_root/lock" ] || rm -f "$state_root/lock"
 		rmdir "$state_root" 2>/dev/null || record 9 FAIL "the state root is removed" "not empty: $(entries_of "$state_root")"
 		rmdir "$home/.local/state" "$home/.local" 2>/dev/null
 	fi

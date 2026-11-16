@@ -20,6 +20,12 @@ registry=$HOME/.config/dshd/releases
 uid=$(id -u)
 here=$(cd "$(dirname "$0")" && pwd)
 
+# The root lock every changing verb of dshd takes, and leaves in place.
+root_lock() {
+	mkdir -p "$state"
+	: >>"$state/lock"
+}
+
 fail() {
 	printf '{"error":{"kind":"%s","message":"%s","hint":null}}\n' "$2" "$3" >&2
 	exit "$1"
@@ -153,6 +159,7 @@ get_json() {
 
 verb_run() {
 	local name='' release='' cwd=$PWD dir entry
+	root_lock
 	while [ "$#" -gt 0 ]; do
 		case $1 in
 		--name) name=$2; shift ;;
@@ -225,6 +232,7 @@ release_add() {
 	done
 	[ -n "$dsh" ] || fail 2 invalid-argument "release add needs --dsh PATH"
 	[ -n "$mode" ] || fail 2 invalid-argument "release add needs --permission-mode MODE"
+	root_lock
 	dsh=$(cd -P "$(dirname "$dsh")" && pwd)/$(basename "$dsh")
 	while [ -L "$dsh" ]; do
 		dsh=$(readlink -f "$dsh")

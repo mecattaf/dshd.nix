@@ -129,6 +129,8 @@ expect "run" "$?" 0 \
 	"[2] PASS dshd release add $prefix" \
 	"[2] PASS the entry is read-only" \
 	"[2] PASS the entry's bin/dsh is the given DSH, not a copy" \
+	"[2] PASS release.json states the permission mode" \
+	"[2] PASS the name ~/.config/dshd/releases/$prefix points at the entry" \
 	"[3] PASS get: state running" \
 	"[3] PASS get: unit gui/$(id -u)/dshd.$prefix-web" \
 	"[3] PASS get: a web URL" \

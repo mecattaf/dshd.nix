@@ -14,7 +14,6 @@ fn log(index: u64, bytes: u64) -> LogFile {
 
 // catches: retention that keeps more or fewer than 20 runs, or removes newer runs before older ones
 #[test]
-#[ignore = "packet D10: log retention"]
 fn keeps_the_twenty_newest_runs() {
     let files: Vec<LogFile> = (0..25).map(|index| log(index, 10)).collect();
     let current = files.last().unwrap().path.clone();
@@ -25,7 +24,6 @@ fn keeps_the_twenty_newest_runs() {
 
 // catches: the size bound ignored, applied to the running run, or removing newer ended runs first
 #[test]
-#[ignore = "packet D10: log retention"]
 fn ended_runs_past_the_byte_bound_go_oldest_first() {
     let big = KEEP_BYTES / 2;
     let files = vec![
@@ -40,7 +38,6 @@ fn ended_runs_past_the_byte_bound_go_oldest_first() {
 
 // catches: the current run's log, latest.log or a foreign file removed
 #[test]
-#[ignore = "packet D10: log retention"]
 fn never_removes_current_latest_or_foreign_files() {
     let mut files: Vec<LogFile> = (0..30).map(|index| log(index, 10)).collect();
     let current = files.first().unwrap().path.clone();

@@ -85,8 +85,12 @@ const DEADLINE_DISARMED: u8 = 2;
 /// `exec` of the `current` runner for the next run.
 pub(super) fn run(name: &str) -> u8 {
     // Before any thread exists, as on Linux: every thread inherits the
-    // mask, and only the main thread's sigwait takes a stop.
-    if let Err(error) = sys::block_signals(signal::RUNNER_SIGNALS) {
+    // mask, and only the main thread's sigwait takes a stop. macOS drops
+    // a SIGCHLD without a handler even while it is blocked, so dsh's end
+    // and the runner's own wakes would never reach sigwait.
+    if let Err(error) = sys::keep_for_sigwait(sys::SIGCHLD)
+        .and_then(|()| sys::block_signals(signal::RUNNER_SIGNALS))
+    {
         log_line(&error.to_string());
         return EXIT_CONFIG;
     }

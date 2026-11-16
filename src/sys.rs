@@ -128,6 +128,40 @@ pub fn block_signals(signals: &[i32]) -> Result<(), Error> {
     check(code).map_err(|source| Error::io("block", format!("signals {signals:?}"), source))
 }
 
+/// Gives `signal` a handler that does nothing, so that a blocked
+/// instance of it stays pending for `sigwait`. macOS (as the BSDs) drops
+/// a signal whose default action is to ignore it, SIGCHLD among them, the
+/// moment it is sent, blocked or not, so `sigwait` would never see a
+/// child's end or the runner's own wake; Linux keeps it pending. The
+/// handler runs only where the signal is not blocked, which in the runner
+/// is nowhere, and `exec` resets it to the default for dsh. `SA_RESTART`
+/// keeps it from interrupting a system call where it does run.
+pub fn keep_for_sigwait(signal: i32) -> Result<(), Error> {
+    // SAFETY: `sigaction` is plain data (a handler address, a signal set
+    // and flags), for which all zero bytes are a valid value.
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = ignore_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+    action.sa_mask = empty_set();
+    action.sa_flags = libc::SA_RESTART;
+    // SAFETY: `action` is initialised and alive for the call, a null
+    // pointer for the previous action is allowed, and the handler is an
+    // `extern "C"` function that touches nothing, which is
+    // async-signal-safe.
+    let code = unsafe { libc::sigaction(signal, &raw const action, ptr::null_mut()) };
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(Error::io(
+            "install",
+            format!("a handler for signal {signal}"),
+            io::Error::last_os_error(),
+        ))
+    }
+}
+
+/// The handler of [`keep_for_sigwait`]: nothing.
+extern "C" fn ignore_signal(_signal: libc::c_int) {}
+
 /// Waits for one of `signals` with `sigwait`. Blocks.
 pub fn wait_signal(signals: &[i32]) -> Result<i32, Error> {
     let set = signal_set(signals)?;
@@ -839,6 +873,33 @@ mod tests {
             wait_signal(&[libc::SIGUSR2]).unwrap()
         });
         assert_eq!(waiter.join().unwrap(), libc::SIGUSR2);
+    }
+
+    // catches: a blocked SIGCHLD dropped before sigwait takes it (macOS discards a signal whose
+    // default action is to ignore it unless it has a handler), so the runner never sees dsh end
+    #[test]
+    fn a_kept_sigchld_stays_pending_for_sigwait() {
+        keep_for_sigwait(SIGCHLD).unwrap();
+        let waiter = std::thread::spawn(|| {
+            block_signals(&[SIGCHLD]).unwrap();
+            // SAFETY: SIGCHLD is blocked in this thread, so directing it at this thread only marks
+            // it pending until sigwait takes it.
+            let code = unsafe { libc::pthread_kill(libc::pthread_self(), SIGCHLD) };
+            assert_eq!(code, 0);
+            let mut pending = empty_set();
+            // SAFETY: `pending` is an initialised signal set, written by sigpending.
+            assert_eq!(unsafe { libc::sigpending(&raw mut pending) }, 0);
+            // SAFETY: `pending` is an initialised signal set.
+            let kept = unsafe { libc::sigismember(&raw const pending, SIGCHLD) };
+            assert_eq!(kept, 1, "SIGCHLD was dropped instead of kept pending");
+            wait_signal(&[SIGCHLD]).unwrap()
+        });
+        let received = waiter.join();
+        // The default again, so the handler interrupts no other test's system call.
+        // SAFETY: SIG_DFL is a valid disposition for SIGCHLD.
+        let restored = unsafe { libc::signal(SIGCHLD, libc::SIG_DFL) };
+        assert_ne!(restored, libc::SIG_ERR);
+        assert_eq!(received.unwrap(), SIGCHLD);
     }
 
     // catches: an invalid signal number is silently accepted when constructing the supervisor signal mask

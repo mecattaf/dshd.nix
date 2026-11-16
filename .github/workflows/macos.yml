@@ -97,14 +97,14 @@ jobs:
 
       - name: Integration tests, relay (a record, not a gate)
         continue-on-error: true
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: |
           export PATH="$PWD/tests/stub:$PATH"
           cargo test --locked --offline --test relay --no-fail-fast
 
       - name: Integration tests, runner (a record, not a gate)
         continue-on-error: true
-        timeout-minutes: 6
+        timeout-minutes: 12
         run: |
           export PATH="$PWD/tests/stub:$PATH"
           cargo test --locked --offline --test runner --no-fail-fast

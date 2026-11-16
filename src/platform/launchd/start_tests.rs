@@ -12,7 +12,6 @@ const OLD: &str = "00000000000000000000000000000000";
 
 // catches: a start that kickstarts, bootstraps twice, or bootstraps a plist other than the one it wrote
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn start_bootstraps_the_rendered_plist_once() {
     let bench = Bench::new("ld-start", "web-1");
     bench.ready_on_bootstrap(NEW, Duration::ZERO);
@@ -42,7 +41,6 @@ fn start_bootstraps_the_rendered_plist_once() {
 
 // catches: a start of a running job that spawns a second runner or boots the first one out
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn start_of_a_running_job_calls_nothing_more() {
     let bench = Bench::new("ld-start-running", "web-1");
     bench
@@ -54,7 +52,6 @@ fn start_of_a_running_job_calls_nothing_more() {
 
 // catches: a start that bootstraps over a loaded job that ended (launchd refuses it) instead of booting it out first
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn start_of_an_ended_job_boots_it_out_first() {
     let bench = Bench::new("ld-start-ended", "web-1");
     bench.fake.hold("dshd.web-1", &bench.plist(), None, Some(0));
@@ -73,7 +70,6 @@ fn start_of_an_ended_job_boots_it_out_first() {
 
 // catches: a start that returns on the previous run's ready state file instead of waiting for its own run
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn start_waits_for_a_new_invocation() {
     let bench = Bench::new("ld-start-wait", "web-1");
     let run = bench.run_dir();
@@ -91,7 +87,6 @@ fn start_waits_for_a_new_invocation() {
 
 // catches: a start that waits out the whole deadline for a runner that already ended
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn start_returns_when_the_run_ends_before_ready() {
     let bench = Bench::new("ld-start-ends", "web-1");
     bench.fake.state().exits_at_once = Some(78);
@@ -109,7 +104,6 @@ fn start_returns_when_the_run_ends_before_ready() {
 
 // catches: a start that never returns when the runner neither readies nor ends
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn start_gives_up_at_the_startup_wait() {
     let bench = Bench::new("ld-start-deadline", "web-1");
     let manager = bench.manager.with_timing(
@@ -126,7 +120,6 @@ fn start_gives_up_at_the_startup_wait() {
 
 // catches: no GUI login session reported as anything but exit 7
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn start_without_a_gui_session_exits_7() {
     let bench = Bench::new("ld-start-nogui", "web-1");
     bench.fake.state().no_gui_domain = true;
@@ -140,7 +133,6 @@ fn start_without_a_gui_session_exits_7() {
 
 // catches: a refused bootstrap swallowed, or reported under another tool's name so the CLI cannot read it as a failed start
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn a_refused_bootstrap_is_a_launchctl_failure() {
     let bench = Bench::new("ld-start-refused", "web-1");
     bench.fake.state().bootstrap_failure =
@@ -156,7 +148,6 @@ fn a_refused_bootstrap_is_a_launchctl_failure() {
 
 // catches: a restart that bootstraps over the running job, or never starts the new one
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn restart_boots_out_then_bootstraps() {
     let bench = Bench::new("ld-restart", "web-1");
     bench
@@ -185,7 +176,6 @@ fn restart_boots_out_then_bootstraps() {
 
 // catches: any verb dshd must never use (kickstart, enable, disable, load) appearing in a start or restart
 #[test]
-#[ignore = "packet D04: launchd start and restart"]
 fn start_and_restart_use_only_print_bootout_and_bootstrap() {
     let bench = Bench::new("ld-start-verbs", "web-1");
     bench.ready_on_bootstrap(NEW, Duration::ZERO);

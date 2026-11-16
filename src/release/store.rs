@@ -96,12 +96,7 @@ fn digest_hex(dsh: &Path, runner: &[u8], release_json: &[u8]) -> String {
 /// A label that is not a valid release name is `release-invalid`.
 pub fn add_entry(root: &Path, inputs: &EntryInputs<'_>) -> Result<PathBuf, Error> {
     if !valid_label(inputs.label) {
-        return Err(Error::ReleaseInvalid {
-            release: inputs.label.to_owned(),
-            reason: "a release name is 1 to 64 characters of letters, digits, '.', '_' \
-                and '-', and does not start with '.' or '-'"
-                .to_owned(),
-        });
+        return Err(invalid_label(inputs.label));
     }
     let (dsh, runner) = resolved(inputs)?;
     let hash = digest_hex(&dsh, &runner, inputs.release_json);
@@ -156,14 +151,16 @@ pub fn is_entry(root: &Path, path: &Path) -> bool {
 /// Points registry name `name` in `registry_dir` (created 0700 when
 /// missing) at `entry`, replacing what it pointed at.
 pub fn register(registry_dir: &Path, name: &str, entry: &Path) -> Result<(), Error> {
-    let _ = (registry_dir, name, entry);
-    Err(not_built())
+    if !valid_label(name) {
+        return Err(invalid_label(name));
+    }
+    fsx::create_dir_private(registry_dir)?;
+    fsx::symlink_replace(entry, &registry_dir.join(name))
 }
 
 /// The entry registry name `name` points at, when it does.
 pub fn registered(registry_dir: &Path, name: &str) -> Result<Option<PathBuf>, Error> {
-    let _ = (registry_dir, name);
-    Err(not_built())
+    fsx::read_link(&registry_dir.join(name))
 }
 
 /// The entries `release prune` removes: every entry not in `held` (the
@@ -171,8 +168,13 @@ pub fn registered(registry_dir: &Path, name: &str) -> Result<Option<PathBuf>, Er
 /// `booted`), sorted by path.
 #[must_use]
 pub fn prune_selection(entries: &[PathBuf], held: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
-    let _ = (entries, held);
-    Vec::new()
+    let mut selected: Vec<PathBuf> = entries
+        .iter()
+        .filter(|entry| !held.contains(*entry))
+        .cloned()
+        .collect();
+    selected.sort();
+    selected
 }
 
 /// Whether `label` is a name an entry may carry: 1 to 64 characters of
@@ -185,6 +187,16 @@ fn valid_label(label: &str) -> bool {
         && label
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+}
+
+/// The `release-invalid` refusal of a label [`valid_label`] rejects.
+fn invalid_label(label: &str) -> Error {
+    Error::ReleaseInvalid {
+        release: label.to_owned(),
+        reason: "a release name is 1 to 64 characters of letters, digits, '.', '_' \
+            and '-', and does not start with '.' or '-'"
+            .to_owned(),
+    }
 }
 
 /// The label of the entry `name` names, when `name` has the shape of an
@@ -260,10 +272,6 @@ fn make_writable(path: &Path) {
             std::fs::Permissions::from_mode(0o700),
         ));
     }
-}
-
-fn not_built() -> Error {
-    crate::platform::launchd::not_built("the directory release store")
 }
 
 #[cfg(test)]

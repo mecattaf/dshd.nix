@@ -49,6 +49,13 @@ fn mode(path: &Path) -> u32 {
         & 0o777
 }
 
+// catches: the store under the state root itself (`%S/.releases`) instead of beside the instances
+#[test]
+fn the_store_sits_beside_the_instances() {
+    let root = StateRoot::new(PathBuf::from("/state"));
+    assert_eq!(store_root(&root), PathBuf::from("/state/dshd/.releases"));
+}
+
 // catches: an entry with the wrong layout, writable after creation, or a name version_label cannot read
 #[test]
 fn add_writes_a_read_only_entry() {

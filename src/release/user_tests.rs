@@ -275,7 +275,6 @@ fn the_runner_comes_from_beside_the_running_dshd() {
 
 // catches: a release that does not validate as one, or one whose entry is writable
 #[test]
-#[ignore = "packet D17: release registry and prune"]
 fn add_writes_an_entry_and_points_the_name_at_it() {
     let fixture = user("user-add");
     let name = InstanceName::parse("stable").unwrap();
@@ -342,7 +341,6 @@ fn add_writes_an_entry_and_points_the_name_at_it() {
 
 // catches: prune removing an entry a name or an instance link holds, or leaving one nothing holds
 #[test]
-#[ignore = "packet D17: release registry and prune"]
 fn prune_removes_only_what_nothing_holds() {
     let fixture = user("user-prune");
     let held_by_name = fixture.entry("stable", b"{}");

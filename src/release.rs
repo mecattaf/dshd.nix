@@ -105,10 +105,8 @@ impl Registries {
 
 /// The directory store of a user: `.releases` in the instances directory
 /// (`%S/dshd/.releases`), a dot directory the instance listing skips.
-/// `store::store_root` joins its argument's own path, so it is handed the
-/// instances directory.
 pub fn directory_store(state_root: &StateRoot) -> PathBuf {
-    store::store_root(&StateRoot::new(state_root.instances_dir()))
+    store::store_root(state_root)
 }
 
 /// Resolves the registry link `<RELEASES_DIR>/<name>` to its canonical

@@ -48,10 +48,12 @@ pub struct EntryInputs<'a> {
     pub release_json: &'a [u8],
 }
 
-/// `<state root>/.releases`.
+/// `<state root>/dshd/.releases` (`%S/dshd/.releases`): beside the
+/// instance directories, which the instance listing skips as a dot
+/// directory.
 #[must_use]
 pub fn store_root(state_root: &StateRoot) -> PathBuf {
-    state_root.path().join(STORE_DIR)
+    state_root.instances_dir().join(STORE_DIR)
 }
 
 /// The entry hash of the inputs, by the rule in the module documentation.

@@ -159,18 +159,39 @@ pub fn remove_tree(path: &Path) -> Result<(), Error> {
 
 /// Takes an exclusive lock on `path`, creating it 0600 when absent. Blocks.
 pub fn lock_exclusive(path: &Path) -> Result<Lock, Error> {
-    let file = OpenOptions::new()
+    let file = open_lock(path)?;
+    lock_file(file, path)
+}
+
+/// Takes an exclusive lock on `path` as [`lock_exclusive`] does, unless
+/// another holder has it: then `Ok(None)` at once, without waiting.
+pub fn try_lock_exclusive(path: &Path) -> Result<Option<Lock>, Error> {
+    let file = open_lock(path)?;
+    match file.try_lock() {
+        Ok(()) => held(file, path).map(Some),
+        Err(fs::TryLockError::WouldBlock) => Ok(None),
+        Err(fs::TryLockError::Error(e)) => Err(Error::io("lock", path, e)),
+    }
+}
+
+fn open_lock(path: &Path) -> Result<File, Error> {
+    OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(false)
         .mode(LOCK_MODE)
         .open(path)
-        .map_err(|e| Error::io("open", path, e))?;
-    lock_file(file, path)
+        .map_err(|e| Error::io("open", path, e))
 }
 
 fn lock_file(file: File, path: &Path) -> Result<Lock, Error> {
     file.lock().map_err(|e| Error::io("lock", path, e))?;
+    held(file, path)
+}
+
+/// The lock on `file`, taken, once `path` still names that file: a lock
+/// file removed and created again meanwhile is `NotFound`.
+fn held(file: File, path: &Path) -> Result<Lock, Error> {
     let opened = file.metadata().map_err(|e| Error::io("stat", path, e))?;
     let current = fs::symlink_metadata(path).map_err(|e| Error::io("lock", path, e))?;
     if !current.is_file() || (opened.dev(), opened.ino()) != (current.dev(), current.ino()) {

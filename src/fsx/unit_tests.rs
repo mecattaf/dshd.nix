@@ -130,3 +130,22 @@ fn a_waiter_refuses_a_replaced_lock_inode() {
     drop(lock_exclusive(&path).unwrap());
     assert_eq!(fs::read_to_string(&path).unwrap(), "replacement");
 }
+
+// catches: a try-lock that waits for the holder, takes a lock someone holds, or never takes a free one
+#[test]
+fn try_lock_answers_at_once() {
+    let scratch = Scratch::new("fsx-try-lock");
+    let path = scratch.path().join("lock");
+    let first = try_lock_exclusive(&path).unwrap().expect("a free lock");
+    assert!(try_lock_exclusive(&path).unwrap().is_none(), "held");
+    drop(first);
+    let again = try_lock_exclusive(&path).unwrap();
+    assert!(again.is_some(), "released");
+    assert!(
+        matches!(
+            try_lock_exclusive(&scratch.path().join("absent").join("lock")),
+            Err(Error::Io { .. })
+        ),
+        "a missing directory"
+    );
+}

@@ -156,8 +156,56 @@ pub fn parse_job(text: &str) -> Result<JobFacts, Error> {
 /// returned, dshd's or not; lines that do not have three fields are
 /// skipped.
 pub fn parse_domain_services(text: &str) -> Vec<ServiceEntry> {
-    let _ = text;
-    Vec::new()
+    let mut entries = Vec::new();
+    let mut depth = 0usize;
+    let mut services_depth = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(target) = services_depth {
+            if trimmed == "}" {
+                depth = depth.saturating_sub(1);
+                if depth < target {
+                    services_depth = None;
+                }
+                continue;
+            }
+            if trimmed.ends_with('{') {
+                depth += 1;
+                continue;
+            }
+            if depth == target {
+                let fields: Vec<&str> = trimmed.split_whitespace().collect();
+                if let [pid_field, last_exit_field, label] = fields.as_slice() {
+                    let pid = match *pid_field {
+                        "0" | "-" => None,
+                        other => other.parse::<u32>().ok(),
+                    };
+                    let last_exit = match *last_exit_field {
+                        "-" => None,
+                        other => other.parse::<i32>().ok(),
+                    };
+                    entries.push(ServiceEntry {
+                        label: (*label).to_owned(),
+                        pid,
+                        last_exit,
+                    });
+                }
+            }
+            continue;
+        }
+        if trimmed.ends_with('{') {
+            let before = depth;
+            depth += 1;
+            if before == 1 && trimmed == "services = {" {
+                services_depth = Some(depth);
+            }
+            continue;
+        }
+        if trimmed == "}" {
+            depth = depth.saturating_sub(1);
+        }
+    }
+    entries
 }
 
 /// The `disabled services = { ... }` block of `launchctl print-disabled`:
@@ -165,8 +213,51 @@ pub fn parse_domain_services(text: &str) -> Vec<ServiceEntry> {
 /// `enabled` and `false` mean enabled; other blocks (such as
 /// `login item associations`) are not read.
 pub fn parse_disabled(text: &str) -> BTreeMap<String, bool> {
-    let _ = text;
-    BTreeMap::new()
+    let mut disabled = BTreeMap::new();
+    let mut depth = 0usize;
+    let mut block_depth = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(target) = block_depth {
+            if trimmed == "}" {
+                depth = depth.saturating_sub(1);
+                if depth < target {
+                    block_depth = None;
+                }
+                continue;
+            }
+            if trimmed.ends_with('{') {
+                depth += 1;
+                continue;
+            }
+            if depth == target {
+                let Some(rest) = trimmed.strip_prefix('"') else {
+                    continue;
+                };
+                let Some((label, word)) = rest.split_once("\" => ") else {
+                    continue;
+                };
+                let value = match word.trim() {
+                    "disabled" | "true" => true,
+                    "enabled" | "false" => false,
+                    _ => continue,
+                };
+                disabled.insert(label.to_owned(), value);
+            }
+            continue;
+        }
+        if trimmed.ends_with('{') {
+            depth += 1;
+            if trimmed == "disabled services = {" {
+                block_depth = Some(depth);
+            }
+            continue;
+        }
+        if trimmed == "}" {
+            depth = depth.saturating_sub(1);
+        }
+    }
+    disabled
 }
 
 #[cfg(test)]

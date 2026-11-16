@@ -92,7 +92,6 @@ fn unreadable_values_are_unknown() {
 
 // catches: services outside the services block listed, a pid of 0 read as a process, or a label with spaces cut
 #[test]
-#[ignore = "packet D03: launchctl domain and disabled parsers"]
 fn domain_services_are_read_from_their_block_only() {
     let services = parse_domain_services(&fixture("domain.txt"));
     let labels: Vec<&str> = services.iter().map(|entry| entry.label.as_str()).collect();
@@ -119,7 +118,6 @@ fn domain_services_are_read_from_their_block_only() {
 
 // catches: an empty or unrelated domain text producing entries
 #[test]
-#[ignore = "packet D03: launchctl domain and disabled parsers"]
 fn a_domain_without_services_has_none() {
     assert!(parse_domain_services("gui/501 = {\n\ttype = gui\n}\n").is_empty());
     assert!(parse_domain_services("").is_empty());
@@ -127,7 +125,6 @@ fn a_domain_without_services_has_none() {
 
 // catches: the disabled list read from the login-item block, or the old true/false words misread
 #[test]
-#[ignore = "packet D03: launchctl domain and disabled parsers"]
 fn disabled_list_reads_both_vocabularies() {
     for name in ["disabled.txt", "disabled-legacy.txt"] {
         let disabled = parse_disabled(&fixture(name));

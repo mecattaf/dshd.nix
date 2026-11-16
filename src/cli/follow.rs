@@ -578,7 +578,6 @@ mod tests {
     // catches: a followed run log (launchd) whose new lines never reach the pump, a follower from
     // now that reprints the run, or one from the start that skips the runner's first line
     #[test]
-    #[ignore = "packet D11: run log follower"]
     fn a_run_log_file_feeds_the_pump() {
         let scratch = crate::fsx::testing::Scratch::new("follow-run-log");
         let path = scratch.path().join("0123456789abcdef0123456789abcdef.log");

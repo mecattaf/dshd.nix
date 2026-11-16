@@ -324,7 +324,6 @@ mod tests {
     // catches: the launchd window not read from the run's own log file, or a partial last line
     // shown
     #[test]
-    #[ignore = "packet D09: per-run logs"]
     fn a_run_log_file_is_read_whole_lines_only() {
         let scratch = Scratch::new("read-run-log");
         let path = scratch.path().join("0123456789abcdef0123456789abcdef.log");

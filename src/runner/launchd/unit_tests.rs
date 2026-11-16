@@ -386,7 +386,6 @@ fn the_startup_deadline_fires_only_for_an_unready_run() {
 // catches: a new job that keeps a killed runner's stop intent or web URL (its end would read stopped), keeps an old
 // history, writes no state file for `start` to wait on, or never makes its log the runner's output
 #[test]
-#[ignore = "packets D08, D09, D10, D14: the launchd runner's start of a run"]
 fn a_fresh_run_sets_up_its_files() {
     let scratch = Scratch::new("launchd-runner-fresh");
     let place = place(&scratch);
@@ -452,7 +451,6 @@ fn a_fresh_run_sets_up_its_files() {
 // catches: the runner's own restart clearing the stop intent a CLI wrote meanwhile, beginning a new history (so
 // `restarts` stays 0), or reusing the previous run's invocation id
 #[test]
-#[ignore = "packets D08, D09, D10, D14: the launchd runner's start of a run"]
 fn an_exec_restart_continues_the_job() {
     let scratch = Scratch::new("launchd-runner-continue");
     let place = place(&scratch);
@@ -496,7 +494,6 @@ fn an_exec_restart_continues_the_job() {
 
 // catches: run logs that grow without bound, or a start that removes its own log
 #[test]
-#[ignore = "packets D08, D09, D10, D14: the launchd runner's start of a run"]
 fn old_run_logs_are_pruned_at_the_start() {
     let scratch = Scratch::new("launchd-runner-prune");
     let place = place(&scratch);
@@ -533,7 +530,6 @@ fn old_run_logs_are_pruned_at_the_start() {
 // catches: a run the runner completed without systemd's end words, without the stop intent or with the per-run files
 // left, or a stop that restarts
 #[test]
-#[ignore = "packets D08, D12, D13: the launchd runner's completion"]
 fn a_stopped_run_is_completed_in_systemd_words() {
     let scratch = Scratch::new("launchd-runner-complete");
     let (place, begun) = running(&scratch);
@@ -575,7 +571,6 @@ fn a_stopped_run_is_completed_in_systemd_words() {
 // catches: a crash after readiness that is not restarted, restarted without the pause, through another program than
 // the current runner, without the automatic start in the history, or without the auto-restart phase
 #[test]
-#[ignore = "packets D08, D12, D13: the launchd runner's restart in place"]
 fn a_crash_after_readiness_restarts_in_place() {
     let scratch = Scratch::new("launchd-runner-restart");
     let (place, begun) = running(&scratch);
@@ -620,7 +615,6 @@ fn a_crash_after_readiness_restarts_in_place() {
 
 // catches: DSH's restart button counted as an automatic restart
 #[test]
-#[ignore = "packets D08, D12, D13: the launchd runner's restart in place"]
 fn the_restart_button_restarts_but_is_not_automatic() {
     let scratch = Scratch::new("launchd-runner-button");
     let (place, begun) = running(&scratch);
@@ -639,7 +633,6 @@ fn the_restart_button_restarts_but_is_not_automatic() {
 // catches: a runner that restarts dsh after a bootout's SIGTERM arrived during the pause, or after a CLI wrote a
 // stop intent during it
 #[test]
-#[ignore = "packets D08, D12, D13: the launchd runner's restart in place"]
 fn a_stop_during_the_pause_wins() {
     let scratch = Scratch::new("launchd-runner-pause-stop");
     let (_place, begun) = running(&scratch);
@@ -671,7 +664,6 @@ fn a_stop_during_the_pause_wins() {
 // catches: a restart that skips the instance lock, blocks in it so a stop cannot get through, or never restarts
 // once the lock is free
 #[test]
-#[ignore = "packets D08, D12, D13: the launchd runner's restart in place"]
 fn the_restart_waits_for_the_instance_lock() {
     let scratch = Scratch::new("launchd-runner-lock");
     let (place, begun) = running(&scratch);
@@ -705,7 +697,6 @@ fn the_restart_waits_for_the_instance_lock() {
 
 // catches: a start limit that restarts anyway, or refuses without saying so in the run's end
 #[test]
-#[ignore = "packets D08, D12, D13: the launchd runner's restart in place"]
 fn the_start_limit_refuses_as_start_limit_hit() {
     let scratch = Scratch::new("launchd-runner-limit");
     let (place, begun) = running(&scratch);
@@ -724,7 +715,6 @@ fn the_start_limit_refuses_as_start_limit_hit() {
 
 // catches: a start the runner ended at its deadline recorded as an ordinary failure, or restarted
 #[test]
-#[ignore = "packets D08, D12, D13: the launchd runner's completion"]
 fn a_timed_out_start_is_recorded_as_a_timeout() {
     let scratch = Scratch::new("launchd-runner-timeout");
     let (place, begun) = running(&scratch);
@@ -749,7 +739,6 @@ fn a_timed_out_start_is_recorded_as_a_timeout() {
 // catches: a start refused before dsh ran (no start half of this invocation) left without an end, or recorded with a
 // child it never had
 #[test]
-#[ignore = "packets D08, D12, D13: the launchd runner's completion"]
 fn a_refused_start_is_recorded_without_a_child() {
     let scratch = Scratch::new("launchd-runner-refused");
     let place = place(&scratch);

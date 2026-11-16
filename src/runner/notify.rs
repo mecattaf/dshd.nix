@@ -195,7 +195,6 @@ mod tests {
     // catches: the launchd runner's readiness or stop never reaching run/state.json, or a phase change that
     // rewrites the run's invocation or pid, so `start` waits out its whole deadline
     #[test]
-    #[ignore = "packet D08: the launchd runner's state file"]
     fn state_file_channel_moves_the_phase() {
         use crate::fsx::testing::Scratch;
         use crate::platform::launchd::runstate::RunState;

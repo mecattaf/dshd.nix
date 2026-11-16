@@ -1,7 +1,7 @@
 //! The one `LaunchAgent` property list dshd writes per instance, from a
-//! closed key set. Scheduled work never lives in dshd's jobs: a separate
-//! heartbeat wakes instances with `dshd get` and `dshd start`. Some hosts
-//! also refuse any job that carries a schedule key. So the renderer writes
+//! closed key set. Scheduling is not dshd's job: whatever schedules work
+//! starts instances from outside with `dshd start`, and some hosts refuse
+//! any job that carries a schedule key. So the renderer writes
 //! exactly [`ALLOWED_KEYS`], in that order, and nothing else; no plist
 //! ever holds an environment value, a token or a credential.
 

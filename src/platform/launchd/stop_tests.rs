@@ -73,8 +73,10 @@ fn a_job_that_stays_is_a_launchctl_failure() {
 fn stop_without_a_gui_session_exits_7() {
     let bench = Bench::new("ld-stop-nogui", "web-1");
     bench.fake.state().no_gui_domain = true;
-    assert_eq!(
-        stop(&bench.manager, &bench.name).unwrap_err().exit_code(),
-        7
+    let error = stop(&bench.manager, &bench.name).unwrap_err();
+    assert_eq!(error.exit_code(), 7, "{error}");
+    assert!(
+        error.to_string().contains("no GUI login session"),
+        "{error}"
     );
 }

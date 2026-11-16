@@ -92,9 +92,14 @@ fn list_loaded_keeps_only_dshd_instances() {
 fn no_gui_session_exits_7() {
     let bench = Bench::new("ld-query-nogui", "web-1");
     bench.fake.state().no_gui_domain = true;
-    assert_eq!(
-        show(&bench.manager, &bench.name).unwrap_err().exit_code(),
-        7
-    );
-    assert_eq!(list_loaded(&bench.manager).unwrap_err().exit_code(), 7);
+    for error in [
+        show(&bench.manager, &bench.name).unwrap_err(),
+        list_loaded(&bench.manager).unwrap_err(),
+    ] {
+        assert_eq!(error.exit_code(), 7, "{error}");
+        assert!(
+            error.to_string().contains("no GUI login session"),
+            "{error}"
+        );
+    }
 }

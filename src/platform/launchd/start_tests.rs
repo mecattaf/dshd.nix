@@ -132,6 +132,10 @@ fn start_without_a_gui_session_exits_7() {
     bench.fake.state().no_gui_domain = true;
     let error = start(&bench.manager, &bench.name).unwrap_err();
     assert_eq!(error.exit_code(), 7, "{error}");
+    assert!(
+        error.to_string().contains("no GUI login session"),
+        "{error}"
+    );
 }
 
 // catches: a refused bootstrap swallowed, or reported under another tool's name so the CLI cannot read it as a failed start

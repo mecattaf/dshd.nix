@@ -12,9 +12,10 @@
 //! samples (a double fork into a new session within a second) is not seen
 //! and can survive; on Linux the unit's cgroup holds it.
 //!
-//! The table goes through [`ProcessTable`]. On macOS it is `/bin/ps`, one
-//! call per snapshot ([`PsTable`]); the tests use a fake and, on Linux,
-//! `/proc`.
+//! The table goes through [`ProcessTable`]. On macOS it is libproc
+//! ([`LibprocTable`]): every pid, then each one's parent, group and start
+//! to the microsecond, with no process spawned per snapshot. The tests use
+//! a fake and the native table (`/proc` on Linux).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -25,7 +26,6 @@ use std::time::{Duration, Instant};
 use crate::error::Error;
 use crate::runner::log_line;
 use crate::sys::{self, SIGTERM};
-use crate::tool::Tool;
 
 /// How often dsh's tree is sampled while dsh runs.
 pub(crate) const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
@@ -35,18 +35,6 @@ pub(crate) const LEFTOVER_GRACE: Duration = Duration::from_secs(2);
 pub(crate) const LEFTOVER_POLL: Duration = Duration::from_millis(100);
 /// Name of the sampling thread.
 const SAMPLER_THREAD: &str = "dshd-tree";
-/// The process table every macOS has, outside any package manager.
-const PS_PROGRAM: &str = "/bin/ps";
-/// One `-o` per column, so no header text can swallow the next keyword;
-/// `lstart` last, since it holds spaces.
-const PS_ARGS: [&str; 11] = [
-    "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "state=", "-o", "lstart=",
-];
-/// Month abbreviations of `lstart` in the C locale.
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
 /// One process in a snapshot of the table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProcessEntry {
@@ -70,24 +58,17 @@ pub(crate) trait ProcessTable: Send + Sync {
     fn signal(&self, pid: u32, signal: i32) -> Result<bool, Error>;
 }
 
-/// The table through `/bin/ps -A`.
-#[derive(Debug, Clone)]
-pub(crate) struct PsTable {
-    ps: Tool,
-}
+/// The table through libproc: every pid (`sys::all_pids`) and each one's
+/// identity (`sys::process_identity`), the start in microseconds since
+/// the epoch. A process libproc does not describe to this user (another
+/// user's) is left out: the runner could signal none of them. Off macOS
+/// the launchd runner never runs, and the table cannot be read.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct LibprocTable;
 
-impl PsTable {
-    /// `/bin/ps`.
-    pub(crate) fn new() -> Self {
-        Self {
-            ps: Tool::at("ps", PS_PROGRAM),
-        }
-    }
-}
-
-impl ProcessTable for PsTable {
+impl ProcessTable for LibprocTable {
     fn snapshot(&self) -> Result<Vec<ProcessEntry>, Error> {
-        Ok(parse_ps(&self.ps.run(PS_ARGS)?.stdout_text()))
+        native_snapshot()
     }
 
     fn signal(&self, pid: u32, signal: i32) -> Result<bool, Error> {
@@ -95,46 +76,33 @@ impl ProcessTable for PsTable {
     }
 }
 
-/// The rows of `ps -A -o pid= -o ppid= -o pgid= -o state= -o lstart=` in
-/// the C locale. A zombie (state `Z...`) is left out, and so is a row that
-/// does not parse.
-pub(crate) fn parse_ps(text: &str) -> Vec<ProcessEntry> {
-    text.lines().filter_map(parse_ps_row).collect()
+#[cfg(target_os = "macos")]
+fn native_snapshot() -> Result<Vec<ProcessEntry>, Error> {
+    Ok(sys::all_pids()?
+        .into_iter()
+        .filter_map(sys::process_identity)
+        .filter(|process| !process.zombie)
+        .filter_map(|process| {
+            Some(ProcessEntry {
+                pid: process.pid,
+                ppid: process.parent,
+                pgid: process.group,
+                start: process
+                    .start_secs
+                    .checked_mul(1_000_000)?
+                    .checked_add(process.start_usecs)?,
+            })
+        })
+        .collect())
 }
 
-fn parse_ps_row(line: &str) -> Option<ProcessEntry> {
-    let fields: Vec<&str> = line.split_whitespace().collect();
-    let [id, parent, group, state, _weekday, month, day, time, year] = fields.as_slice() else {
-        return None;
-    };
-    if state.starts_with('Z') {
-        return None;
-    }
-    Some(ProcessEntry {
-        pid: id.parse().ok()?,
-        ppid: parent.parse().ok()?,
-        pgid: group.parse().ok()?,
-        start: lstart_stamp(month, day, time, year)?,
-    })
-}
-
-/// `Mon DD HH:MM:SS YYYY` as the number `YYYYMMDDHHMMSS`: one-second
-/// resolution, in local time, only ever compared for equality.
-fn lstart_stamp(month: &str, day: &str, time: &str, year: &str) -> Option<u64> {
-    let month = MONTHS.iter().position(|name| *name == month)?;
-    let month = u64::try_from(month).ok()? + 1;
-    let day: u64 = day.parse().ok()?;
-    let mut clock = time.split(':').map(str::parse::<u64>);
-    let (Some(Ok(hours)), Some(Ok(minutes)), Some(Ok(seconds)), None) =
-        (clock.next(), clock.next(), clock.next(), clock.next())
-    else {
-        return None;
-    };
-    let year: u64 = year.parse().ok()?;
-    if day > 31 || hours > 23 || minutes > 59 || seconds > 60 || year > 9999 {
-        return None;
-    }
-    Some(((((year * 100 + month) * 100 + day) * 100 + hours) * 100 + minutes) * 100 + seconds)
+#[cfg(not(target_os = "macos"))]
+fn native_snapshot() -> Result<Vec<ProcessEntry>, Error> {
+    Err(Error::io(
+        "read",
+        "the process table through libproc",
+        std::io::Error::from(std::io::ErrorKind::Unsupported),
+    ))
 }
 
 /// What the runner knows of dsh's descendants.

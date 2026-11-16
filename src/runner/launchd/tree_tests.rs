@@ -1,6 +1,6 @@
-//! Tests of dsh's process tree under launchd: the `ps` parser, the
-//! tracker, the stop of what dsh left behind against a fake table and, on
-//! Linux, against real processes through `/proc`.
+//! Tests of dsh's process tree under launchd: the tracker, the stop of
+//! what dsh left behind against a fake table and against real processes
+//! through the native table (libproc on macOS, `/proc` on Linux).
 
 use std::collections::BTreeSet;
 use std::sync::Mutex;
@@ -56,46 +56,6 @@ impl ProcessTable for FakeTable {
         }
         Ok(present)
     }
-}
-
-// catches: a ps row misread (a column shifted by lstart's spaces or a padded day), a zombie taken for a live process,
-// or a malformed row turned into a process
-#[test]
-fn parses_ps_rows_in_both_layouts() {
-    let text = "\
-      1       0       1 Ss   Sun Nov  8 22:04:59 2026
-  501     1   501 S    Mon Nov 16 06:12:01 2026
-  777   501   501 R+   Mon Nov 16 06:12:02 2026
-  778   777   501 Z    Mon Nov 16 06:12:03 2026
-  779   777   501 S    Xyz Nov 16 06:12:03
-  780   777   501 S    Mon Foo 16 06:12:03 2026
-  781   777   501 S    Mon Nov 16 06:12 2026
-garbage
-";
-    // The stamps read YYYYMMDDhhmmss.
-    assert_eq!(
-        parse_ps(text),
-        [
-            entry(1, 0, 1, 20_261_108_220_459),
-            entry(501, 1, 501, 20_261_116_061_201),
-            entry(777, 501, 501, 20_261_116_061_202),
-        ]
-    );
-}
-
-// catches: a ps call that would print a header, read a locale's month names, or swallow a keyword into a header
-#[test]
-fn ps_is_called_with_one_column_per_option() {
-    let table = PsTable::new();
-    assert_eq!(table.ps.program, std::ffi::OsString::from("/bin/ps"));
-    assert_eq!(PS_ARGS.iter().filter(|arg| **arg == "-o").count(), 5);
-    assert!(
-        PS_ARGS
-            .iter()
-            .filter(|arg| **arg != "-o" && **arg != "-A")
-            .all(|arg| arg.ends_with('=') && !arg.contains(','))
-    );
-    assert_eq!(PS_ARGS.last(), Some(&"lstart="));
 }
 
 // catches: a grandchild missed, the runner or an unrelated process recorded, an ended process kept so its reused
@@ -304,9 +264,21 @@ mod procfs {
     }
 }
 
+/// The table of the platform the tests run on.
+#[cfg(target_os = "linux")]
+fn native_table() -> procfs::ProcTable {
+    procfs::ProcTable
+}
+
+/// The table of the platform the tests run on.
+#[cfg(target_os = "macos")]
+fn native_table() -> LibprocTable {
+    LibprocTable
+}
+
 /// Spawns `sh -c SCRIPT`, which prints `up` once its children exist, and
 /// returns it after that line.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn spawn_tree(script: &str) -> std::process::Child {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
@@ -327,12 +299,10 @@ fn spawn_tree(script: &str) -> std::process::Child {
 
 // catches: real orphans of a dead dsh (reparented, so no longer in its tree) surviving the run, a stubborn one
 // surviving SIGTERM, or another process of the machine touched
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn real_orphans_are_stopped() {
-    use procfs::ProcTable;
-
-    let table = ProcTable;
+    let table = native_table();
     let mut dsh = spawn_tree("sleep 300 & (trap '' TERM; exec sleep 301) & echo up; wait");
     let root = dsh.id();
     let mut tracker = Tracker::default();
@@ -346,7 +316,7 @@ fn real_orphans_are_stopped() {
 
     dsh.kill().unwrap();
     dsh.wait().unwrap();
-    let orphans_alive = |table: &ProcTable| {
+    let orphans_alive = |table: &dyn ProcessTable| {
         let now = table.snapshot().unwrap();
         recorded
             .iter()
@@ -369,4 +339,42 @@ fn real_orphans_are_stopped() {
         thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(orphans_alive(&table), 0, "an orphan survived");
+}
+
+// catches: the libproc table missing this process or its child, misreading the parent or the group,
+// listing a zombie as live, or giving a start that changes between snapshots (so a recorded process
+// would read as ended, or a reused pid as the same process)
+#[cfg(target_os = "macos")]
+#[test]
+fn the_libproc_table_describes_live_processes() {
+    use std::process::Command;
+
+    let table = LibprocTable;
+    let me = std::process::id();
+    let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+    let first = table.snapshot().unwrap();
+    let mine = *first.iter().find(|entry| entry.pid == me).unwrap();
+    let theirs = *first.iter().find(|entry| entry.pid == child.id()).unwrap();
+    assert_eq!(theirs.ppid, me);
+    assert_eq!(
+        theirs.pgid, mine.pgid,
+        "a child stays in its parent's group"
+    );
+    let again = table.snapshot().unwrap();
+    assert!(
+        again.contains(&mine) && again.contains(&theirs),
+        "{again:?}"
+    );
+    child.kill().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while table
+        .snapshot()
+        .unwrap()
+        .iter()
+        .any(|entry| entry.pid == theirs.pid && entry.start == theirs.start)
+    {
+        assert!(Instant::now() < deadline, "a zombie is listed as live");
+        thread::sleep(Duration::from_millis(10));
+    }
+    child.wait().unwrap();
 }

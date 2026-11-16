@@ -18,7 +18,7 @@ use crate::error::Error;
 use crate::fsx;
 use crate::platform::ServiceManager;
 use crate::platform::launchd::LaunchdManager;
-use crate::runner::launchd::tree::{ProcessTable, PsTable};
+use crate::runner::launchd::tree::{LibprocTable, ProcessTable};
 use crate::runner::{log_line, signal, spawn_thread};
 use crate::sys::{self, SIGCHLD};
 
@@ -62,20 +62,20 @@ pub(crate) trait Host {
     fn exec(&self, program: &Path, args: &[OsString]) -> Error;
 }
 
-/// The real platform: launchd's naming and process start source, `/bin/ps`
-/// and the runner's signal mask.
+/// The real platform: launchd's naming and process start source, the
+/// libproc process table and the runner's signal mask.
 #[derive(Debug)]
 pub(crate) struct NativeHost {
     manager: LaunchdManager,
-    table: Arc<PsTable>,
+    table: Arc<LibprocTable>,
 }
 
 impl NativeHost {
-    /// The invoking user's launchd manager and `/bin/ps`.
+    /// The invoking user's launchd manager and the libproc table.
     pub(crate) fn new() -> Result<Self, Error> {
         Ok(Self {
             manager: LaunchdManager::from_env()?,
-            table: Arc::new(PsTable::new()),
+            table: Arc::new(LibprocTable),
         })
     }
 }

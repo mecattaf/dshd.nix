@@ -20,7 +20,6 @@ fn owned(lines: &[&str]) -> Vec<String> {
 
 // catches: `wait` or `run --json` re-reading lines already there when following from now
 #[test]
-#[ignore = "packet D11: run log follower"]
 fn from_now_skips_what_is_there() {
     let scratch = Scratch::new("ld-follow-now");
     let path = scratch.path().join("run.log");
@@ -33,7 +32,6 @@ fn from_now_skips_what_is_there() {
 
 // catches: `-f` from the start losing the first lines, or returning a line twice across polls
 #[test]
-#[ignore = "packet D11: run log follower"]
 fn from_start_reads_everything_once() {
     let scratch = Scratch::new("ld-follow-start");
     let path = scratch.path().join("run.log");
@@ -47,7 +45,6 @@ fn from_start_reads_everything_once() {
 
 // catches: a line handed out before its newline (split in two), or bad bytes failing the follow
 #[test]
-#[ignore = "packet D11: run log follower"]
 fn partial_lines_wait_for_their_newline() {
     let scratch = Scratch::new("ld-follow-partial");
     let path = scratch.path().join("run.log");
@@ -64,7 +61,6 @@ fn partial_lines_wait_for_their_newline() {
 
 // catches: a follower stuck past the end of a replaced (shorter) file
 #[test]
-#[ignore = "packet D11: run log follower"]
 fn a_shrunk_file_is_read_again() {
     let scratch = Scratch::new("ld-follow-shrink");
     let path = scratch.path().join("run.log");

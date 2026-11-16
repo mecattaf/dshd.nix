@@ -13,7 +13,6 @@ fn history(starts: &[(u64, bool)]) -> StartHistory {
 
 // catches: a restart of anything but exit 75, of a stopped run, or of a runner ended by a signal
 #[test]
-#[ignore = "packet D12: restart policy"]
 fn only_an_unasked_75_restarts() {
     assert_eq!(
         after_exit(75, false, false),
@@ -32,7 +31,6 @@ fn only_an_unasked_75_restarts() {
 
 // catches: a limit that counts old starts, admits one too many, or applies when none is set
 #[test]
-#[ignore = "packet D12: restart policy"]
 fn the_start_limit_counts_only_the_interval() {
     let limit = Some(StartLimit {
         burst: 3,
@@ -50,7 +48,6 @@ fn the_start_limit_counts_only_the_interval() {
 
 // catches: restarts counting the first start or DSH's restart button
 #[test]
-#[ignore = "packet D12: restart policy"]
 fn restarts_count_automatic_starts() {
     assert_eq!(
         restarts(&history(&[(1, false), (2, true), (3, false), (4, true)])),

@@ -57,7 +57,6 @@ fn json_shape_is_pinned() {
 
 // catches: a state file written world-readable, non-atomically, or read back different
 #[test]
-#[ignore = "packet D08: run state file"]
 fn writes_and_reads_back_private() {
     let scratch = Scratch::new("runstate-rw");
     let run = run_dir(&scratch);
@@ -69,7 +68,6 @@ fn writes_and_reads_back_private() {
 
 // catches: a missing file read as an error, or a file with an unknown key accepted
 #[test]
-#[ignore = "packet D08: run state file"]
 fn missing_is_none_and_unknown_keys_are_refused() {
     let scratch = Scratch::new("runstate-missing");
     let run = run_dir(&scratch);
@@ -86,7 +84,6 @@ fn missing_is_none_and_unknown_keys_are_refused() {
 
 // catches: a phase change that rewrites the invocation, pid or process start, or that creates a file
 #[test]
-#[ignore = "packet D08: run state file"]
 fn set_phase_changes_only_the_phase() {
     let scratch = Scratch::new("runstate-phase");
     let run = run_dir(&scratch);
@@ -109,7 +106,6 @@ fn set_phase_changes_only_the_phase() {
 
 // catches: a reused pid, a job that no longer runs, or an unknown start time read as the live run
 #[test]
-#[ignore = "packet D08: run state file"]
 fn liveness_needs_the_same_pid_and_start() {
     let state = sample();
     assert!(is_live(&state, Some(4242), Some(1_700_000_000)));
@@ -127,7 +123,6 @@ fn liveness_needs_the_same_pid_and_start() {
 
 // catches: a stop intent or socket a killed runner left behind surviving into the next run (its end would read stopped)
 #[test]
-#[ignore = "packet D08: run state file"]
 fn clear_stale_removes_the_per_run_files_only() {
     let scratch = Scratch::new("runstate-clear");
     let run = run_dir(&scratch);

@@ -8,7 +8,6 @@ fn end(result: &str, code: &str, status: &str) -> EndWords {
 
 // catches: a runner's own end recorded in words the Linux records and the state mapping do not use
 #[test]
-#[ignore = "packet D13: end words"]
 fn own_ends() {
     assert_eq!(own_end(0, false), end("success", "exited", "0"));
     assert_eq!(own_end(75, false), end("exit-code", "exited", "75"));
@@ -18,7 +17,6 @@ fn own_ends() {
 
 // catches: a runner killed by launchd or a crash reconciled as success, or a never-exited job given an end
 #[test]
-#[ignore = "packet D13: end words"]
 fn reconciled_ends() {
     assert_eq!(
         reconciled_end(&LastExit::Signal(9)),
@@ -37,7 +35,6 @@ fn reconciled_ends() {
 
 // catches: signal names taken from another platform's numbering
 #[test]
-#[ignore = "packet D13: end words"]
 fn signal_words_follow_this_platform() {
     assert_eq!(signal_word(libc::SIGTERM), "TERM");
     assert_eq!(signal_word(libc::SIGKILL), "KILL");

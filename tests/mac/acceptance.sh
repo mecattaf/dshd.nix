@@ -1022,7 +1022,7 @@ clean() {
 		set_environment
 	fi
 	for dir in /tmp/dshd-"$prefix".*; do
-		[ -d "$dir" ] && [ -f "$dir/kit/state" ] || continue
+		[ -f "$dir/kit/state" ] || continue
 		[ "$(cd -P "$dir" && pwd)" != "$T" ] || continue
 		found=1
 		record 9 INFO "another temporary prefix of the kit" "$dir: removed"
@@ -1088,8 +1088,8 @@ esac
 case $mode in
 run | hold)
 	[ -z "$positional" ] || die "$mode takes no DIR"
-	[ -n "$dshd_in" ] && [ -f "$dshd_in" ] || die "--dshd FILE is required"
-	[ -n "$dsh_in" ] && [ -e "$dsh_in" ] || die "--dsh FILE is required"
+	[ -f "$dshd_in" ] || die "--dshd FILE is required"
+	[ -e "$dsh_in" ] || die "--dsh FILE is required"
 	if [ -z "$runner_in" ]; then
 		for runner_in in "$(dirname "$dshd_in")/../libexec/dshd/dshd-run" "$(dirname "$dshd_in")/dshd-run"; do
 			[ ! -f "$runner_in" ] || break

@@ -2,8 +2,9 @@
 #
 # Every push builds the branch on an arm64 macOS runner: clippy with
 # -D warnings and the unit tests run natively, the integration tests run as
-# a record (they assume the systemd user manager and do not gate the job),
-# and the release binaries are uploaded as one artifact. The artifact is a
+# a record (they do not gate the job; the relay and runner tests drive the
+# runner's launchd path through the darwin harness in tests/common), and
+# the release binaries are uploaded as one artifact. The artifact is a
 # tarball laid out as the macOS install is, bin/dshd and
 # libexec/dshd/dshd-run, so tests/mac/acceptance.sh can take it as it is.
 #
@@ -57,6 +58,12 @@ jobs:
             echo "gui/$(id -u): absent"
           fi
           if command -v nix >/dev/null 2>&1; then echo "nix: $(command -v nix)"; else echo "nix: absent"; fi
+          # What the integration harness depends on: the scratch roots go
+          # under /tmp, and the stub dsh hashes with sha256sum or shasum.
+          echo "TMPDIR: ${TMPDIR:-unset}"
+          for tool in sha256sum shasum; do
+            if command -v "$tool" >/dev/null 2>&1; then echo "$tool: $(command -v "$tool")"; else echo "$tool: absent"; fi
+          done
 
       - name: Toolchain
         run: |
@@ -73,12 +80,34 @@ jobs:
       - name: Unit tests
         run: cargo test --locked --offline --lib --bins
 
-      - name: Integration tests (a record, not a gate)
+      # One step and one time limit per test binary, so a binary that hangs
+      # does not hide the verdicts of the others. The harness bounds each
+      # wait at 20 s, so a failing test fails in seconds; the limits are
+      # far above what the binaries need when they pass.
+      - name: Integration tests, cli, contract and docs (a record, not a gate)
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 5
         run: |
           export PATH="$PWD/tests/stub:$PATH"
-          cargo test --locked --offline --test '*' --no-fail-fast
+          # Every integration test binary has a step here.
+          listed="tests/cli.rs tests/contract.rs tests/docs.rs tests/relay.rs tests/runner.rs"
+          found=$(echo tests/*.rs)
+          [ "$found" = "$listed" ] || { echo "integration binaries changed: $found"; exit 1; }
+          cargo test --locked --offline --test cli --test contract --test docs --no-fail-fast
+
+      - name: Integration tests, relay (a record, not a gate)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          export PATH="$PWD/tests/stub:$PATH"
+          cargo test --locked --offline --test relay --no-fail-fast
+
+      - name: Integration tests, runner (a record, not a gate)
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          export PATH="$PWD/tests/stub:$PATH"
+          cargo test --locked --offline --test runner --no-fail-fast
 
       - name: Build
         run: cargo build --locked --offline --release --bins

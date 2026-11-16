@@ -18,7 +18,6 @@ fn job(name: &str) -> JobFacts {
 
 // catches: a running job read without its pid, or a pid taken from a nested block
 #[test]
-#[ignore = "packet D02: launchctl print job parser"]
 fn running_job_has_its_pid_and_state() {
     let facts = job("job-running.txt");
     assert_eq!(facts.state, JobState::Running);
@@ -35,7 +34,6 @@ fn running_job_has_its_pid_and_state() {
 
 // catches: a stopped job reported with a pid, or its exit status lost or misread with trailing text
 #[test]
-#[ignore = "packet D02: launchctl print job parser"]
 fn ended_jobs_keep_their_last_exit() {
     let clean = job("job-exited-0.txt");
     assert_eq!(clean.state, JobState::NotRunning);
@@ -51,7 +49,6 @@ fn ended_jobs_keep_their_last_exit() {
 
 // catches: a job loaded but never spawned taken for a stopped or running one
 #[test]
-#[ignore = "packet D02: launchctl print job parser"]
 fn never_spawned_job_is_spawn_scheduled() {
     let facts = job("job-never-ran.txt");
     assert_eq!(facts.state, JobState::SpawnScheduled);
@@ -61,7 +58,6 @@ fn never_spawned_job_is_spawn_scheduled() {
 
 // catches: an unknown state word mapped onto a known state instead of kept verbatim
 #[test]
-#[ignore = "packet D02: launchctl print job parser"]
 fn unknown_state_word_is_kept() {
     let facts = job("job-odd-state.txt");
     assert_eq!(facts.state, JobState::Other("penguin".to_owned()));
@@ -70,7 +66,6 @@ fn unknown_state_word_is_kept() {
 
 // catches: text that is no job block accepted as a job with every fact unknown
 #[test]
-#[ignore = "packet D02: launchctl print job parser"]
 fn text_that_is_no_job_is_a_malformed_answer() {
     for text in ["", "Usage: launchctl print <service-target>\n", "garbage\n"] {
         match parse_job(text) {
@@ -85,7 +80,6 @@ fn text_that_is_no_job_is_a_malformed_answer() {
 
 // catches: a value that is not a number taken as zero instead of unknown
 #[test]
-#[ignore = "packet D02: launchctl print job parser"]
 fn unreadable_values_are_unknown() {
     let text = "gui/501/dshd.x = {\n\tstate = running\n\tpid = many\n\truns = -\n\tlast exit code = soon\n}\n";
     let facts = parse_job(text).unwrap();

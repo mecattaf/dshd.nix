@@ -9,8 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::error::Error;
-use crate::platform::launchd::not_built;
+use crate::error::{Error, ToolFailure};
 
 /// The job's `state` line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,8 +67,88 @@ pub struct ServiceEntry {
 /// with exit status 0 and the reason in `stderr`, since `launchctl`
 /// answered but not with a job.
 pub fn parse_job(text: &str) -> Result<JobFacts, Error> {
-    let _ = text;
-    Err(not_built("the launchctl print parser"))
+    let malformed = |reason: &str| {
+        Error::Tool(Box::new(ToolFailure {
+            tool: "launchctl",
+            args: Vec::new(),
+            status: Some(0),
+            stderr: reason.to_owned(),
+        }))
+    };
+
+    let Some(first) = text.lines().next() else {
+        return Err(malformed("launchctl printed no job block"));
+    };
+    let Some(target) = first.trim_end().strip_suffix(" = {") else {
+        return Err(malformed("launchctl printed no job block"));
+    };
+    if target.trim().is_empty() {
+        return Err(malformed("launchctl printed a job block with no target"));
+    }
+
+    let mut facts = JobFacts {
+        state: JobState::Other(String::new()),
+        pid: None,
+        runs: None,
+        last_exit: None,
+        path: None,
+    };
+    let mut depth = 1usize;
+    for line in text.lines().skip(1) {
+        let trimmed = line.trim();
+        if trimmed.ends_with('{') {
+            depth += 1;
+            continue;
+        }
+        if trimmed == "}" {
+            depth = depth.saturating_sub(1);
+            continue;
+        }
+        if depth != 1 {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once(" = ") else {
+            continue;
+        };
+        match key.trim() {
+            "state" => {
+                facts.state = match value.trim() {
+                    "running" => JobState::Running,
+                    "not running" => JobState::NotRunning,
+                    "spawn scheduled" => JobState::SpawnScheduled,
+                    other => JobState::Other(other.to_owned()),
+                };
+            }
+            "pid" => facts.pid = value.trim().parse::<u32>().ok(),
+            "runs" => facts.runs = value.trim().parse::<u32>().ok(),
+            "path" => facts.path = Some(PathBuf::from(value.trim())),
+            "last exit code" => {
+                let value = value.trim();
+                if value == "(never exited)" {
+                    facts.last_exit = Some(LastExit::Never);
+                } else {
+                    let code = value.split_whitespace().next();
+                    if let Some(code) = code {
+                        let code = code.trim_end_matches(':');
+                        if let Ok(code) = code.parse::<i32>() {
+                            facts.last_exit = Some(LastExit::Code(code));
+                        }
+                    }
+                }
+            }
+            "last terminating signal" => {
+                let number = value.rsplit(':').next();
+                if let Some(number) = number {
+                    let number = number.trim();
+                    if let Ok(signal) = number.parse::<i32>() {
+                        facts.last_exit = Some(LastExit::Signal(signal));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(facts)
 }
 
 /// The entries of the `services = { ... }` block of

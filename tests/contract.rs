@@ -327,6 +327,12 @@ fn output_def(value: &Value) -> &'static str {
     let has = |key: &str| value.get(key).is_some();
     if has("error") {
         "error"
+    } else if has("pruned") {
+        "releasePrune"
+    } else if has("entries") {
+        "releaseList"
+    } else if has("created") {
+        "releaseChange"
     } else if has("outcome") {
         "outcome"
     } else if has("instances") {
@@ -409,6 +415,9 @@ fn golden_json_fits_the_contract() -> TestResult {
         "error",
         "webConnection",
         "read",
+        "releaseChange",
+        "releaseList",
+        "releasePrune",
     ] {
         assert!(seen.contains(def), "no golden case prints a {def} object");
     }

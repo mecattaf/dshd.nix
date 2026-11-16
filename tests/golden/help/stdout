@@ -17,6 +17,7 @@ Verbs:
   enable    start an instance with the user manager
   disable   stop starting an instance with the user manager
   rm        delete a stopped instance and its state
+  release   add, list, remove or prune the releases you add without Nix
   help      this page, or the page of one verb: dshd help VERB
 
 Flags come before --; everything after it goes to dsh unchanged.

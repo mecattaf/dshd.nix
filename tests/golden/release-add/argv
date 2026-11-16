@@ -1,0 +1,8 @@
+release
+add
+stable
+--dsh
+%RELEASE%/bin/dsh
+--permission-mode
+workspace-write
+--json

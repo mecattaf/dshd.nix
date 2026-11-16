@@ -45,6 +45,10 @@ pub const STOP_INTENT_FILE: &str = "stop-intent";
 
 /// The release registry written by the NixOS module.
 pub const RELEASES_DIR: &str = "/etc/dshd/releases";
+/// The user release registry, relative to the configuration root;
+/// `dshd release add` writes it, and dshd reads it only for a name
+/// [`RELEASES_DIR`] does not hold.
+pub const USER_RELEASES_DIR: &str = "dshd/releases";
 /// The registry entry that `dshd run` uses when no `--release` is given.
 pub const DEFAULT_RELEASE: &str = "default";
 /// Paths inside a release package.

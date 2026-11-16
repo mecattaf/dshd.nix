@@ -1,0 +1,8 @@
+state/dshd/.releases/0123456789abcdef0123456789abcdef-dshd-release-stable/bin/dsh %RELEASE%/bin/dsh
+state/dshd/.releases/0123456789abcdef0123456789abcdef-dshd-release-stable/bin/dshd-run %RELEASE%/bin/dshd-run
+state/dshd/.releases/fedcba9876543210fedcba9876543210-dshd-release-old/bin/dsh %RELEASE%/bin/dsh
+state/dshd/.releases/fedcba9876543210fedcba9876543210-dshd-release-old/bin/dshd-run %RELEASE%/bin/dshd-run
+state/dshd/.releases/00000000000000000000000000000000-dshd-release-loose/bin/dsh %RELEASE%/bin/dsh
+state/dshd/.releases/00000000000000000000000000000000-dshd-release-loose/bin/dshd-run %RELEASE%/bin/dshd-run
+config/dshd/releases/stable %ROOT%/state/dshd/.releases/0123456789abcdef0123456789abcdef-dshd-release-stable
+state/dshd/review/booted %ROOT%/state/dshd/.releases/fedcba9876543210fedcba9876543210-dshd-release-old

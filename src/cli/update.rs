@@ -10,7 +10,6 @@ use crate::cli::report::OutcomeSlug;
 use crate::cli::{Context, UpdateArgs};
 use crate::error::Error;
 use crate::instance;
-use crate::name;
 use crate::record::Transport;
 use crate::release::{self, Release};
 use crate::systemctl::ActiveState;
@@ -29,10 +28,7 @@ pub(super) fn run(ctx: &Context, args: &UpdateArgs) -> Result<(), Error> {
     if instance.record.release.starts_with('/') {
         return Err(Error::PathPinned(name.to_string()));
     }
-    let release = release::resolve(
-        Path::new(name::RELEASES_DIR),
-        Some(instance.record.release.as_str()),
-    )?;
+    let release = release::resolve_in(&ctx.registries(), Some(instance.record.release.as_str()))?;
     let removed = instance::strip_environment(&instance, &release.file.unset_environment)?;
     let (old, _) = release::links(&instance.dir)?;
     let changed = instance::update_current(&instance, &ctx.nix_store, &release)?;
@@ -87,7 +83,12 @@ fn describe(
         summary.before.push(format!(
             "Updated dshd instance {name} from {from} to {label}."
         ));
-        if let Some(old) = old {
+        // A release of the directory store has no closure: the line above,
+        // with both labels, is the whole difference.
+        if let Some(old) = old
+            && !release::in_directory_store(old)
+            && !release::in_directory_store(&release.path)
+        {
             match release::closure_difference(&ctx.nix, old, &release.path) {
                 Ok(lines) => {
                     summary.notes.extend(lines.iter().cloned());

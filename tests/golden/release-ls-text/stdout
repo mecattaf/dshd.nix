@@ -1,0 +1,5 @@
+stable  %ROOT%/state/dshd/.releases/%HASH%-dshd-release-stable
+  held by name stable
+old  %ROOT%/state/dshd/.releases/%HASH%-dshd-release-old
+  held by booted link of review
+name gone points at nothing (it dangles)

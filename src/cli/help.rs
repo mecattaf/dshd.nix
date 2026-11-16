@@ -25,6 +25,7 @@ Verbs:
   enable    start an instance with the user manager
   disable   stop starting an instance with the user manager
   rm        delete a stopped instance and its state
+  release   add, list, remove or prune the releases you add without Nix
   help      this page, or the page of one verb: dshd help VERB
 
 Flags come before --; everything after it goes to dsh unchanged.
@@ -91,8 +92,8 @@ start --rerun NAME does that on purpose.
 
   --bg                return once the instance runs, also for a headless task
   --name NAME         instance name; default PROFILE-K with the lowest free K
-  --release RELEASE   a release under /etc/dshd/releases, or a release store path;
-                      default: default
+  --release RELEASE   a release name (under /etc/dshd/releases, else one dshd
+                      release add made), or a release store path; default: default
   --cwd DIR           working directory; default: the current directory
   --label KEY=VALUE   metadata shown by get and ls; KEY matches [a-z0-9._-]+
   --patch FILE        an overlay to snapshot, a regular file of at most 1 MiB;
@@ -242,6 +243,39 @@ the comparison and the removal are done.
   --invocation ID  the 32 hex digits of the last run
   --json, --text   the output format";
 
+const RELEASE: &str = r"Usage: dshd release add NAME --dsh PATH --permission-mode MODE [--env NAME=VALUE]... [--unset NAME]... [--json | --text]
+       dshd release ls [--json | --text]
+       dshd release rm NAME [--json | --text]
+       dshd release prune [--json | --text]
+
+Releases for a machine without Nix. Each is an entry of the directory
+store, ~/.local/state/dshd/.releases (the state root's dshd/.releases),
+named by a link in the user registry, ~/.config/dshd/releases (the
+configuration root's dshd/releases). dshd run --release NAME reads the
+user registry only for a NAME that /etc/dshd/releases does not hold.
+
+add writes the entry NAME: bin/dsh, a link to PATH as it resolves now;
+bin/dshd-run, a copy of the runner installed with this dshd; and
+share/dshd/release.json. The entry is read-only and never changes;
+identical inputs reuse it, and any change makes a new one. NAME then
+points at it. Instances keep their entry until dshd update NAME moves them.
+dshd never copies, fetches or changes the DSH at PATH.
+
+--permission-mode is required: it is the DSH_PERMISSION_MODE the release
+gives every instance whose environment does not set one. There is no
+default, and dshd passes the value to DSH unchanged.
+
+rm removes the name only; its entry stays. prune removes every entry that
+no name and no instance's current or booted link holds. Nothing prunes on
+its own.
+
+  --dsh PATH                the DSH executable the release runs
+  --permission-mode MODE    the permission mode, such as workspace-write
+  --env NAME=VALUE          another variable the release sets; repeatable
+  --unset NAME              a variable stripped from every instance's
+                            environment; repeatable
+  --json, --text            the output format";
+
 const HELP: &str = r"Usage: dshd help [VERB]
 
 Prints the general page, or the page of VERB. dshd VERB --help does the
@@ -278,6 +312,7 @@ fn page(word: Word) -> String {
         Word::Enable => ENABLE,
         Word::Disable => DISABLE,
         Word::Rm => RM,
+        Word::Release => RELEASE,
         Word::Help => HELP,
     };
     match word {

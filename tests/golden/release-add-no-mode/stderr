@@ -1,0 +1,1 @@
+{"error":{"kind":"invalid-argument","message":"release add needs --permission-mode MODE: a release states the permission mode DSH runs with, such as workspace-write; there is no default","hint":"dshd help"}}

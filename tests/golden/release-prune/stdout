@@ -1,0 +1,1 @@
+{"outcome":"pruned","pruned":["%ROOT%/state/dshd/.releases/%HASH%-dshd-release-loose"],"kept":["%ROOT%/state/dshd/.releases/%HASH%-dshd-release-stable","%ROOT%/state/dshd/.releases/%HASH%-dshd-release-old"],"warnings":[]}

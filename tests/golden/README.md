@@ -36,7 +36,9 @@ adds a **Breaking:** entry to the CHANGELOG.
 Both are substituted in `argv`, `env`, `links` and in the contents of every
 file copied from `base/root` and a case's `root`. In stdout, stderr and the
 recorded calls, the value of `%RELEASE%` is replaced first, then the value
-of `%ROOT%`.
+of `%ROOT%`, and then the 32 hex digits of every directory store entry
+(`/<hash>-dshd-release-`) by `%HASH%`, since that hash covers the bytes of
+the runner the build made.
 
 ## The root
 
@@ -171,6 +173,7 @@ false --realise PATH --add-root LINK` points `LINK` at
 | `calls/<tool>` | the expected log of that fake; an empty file means the tool was not called |
 | `gone` | paths under `%ROOT%` that must not exist after the run |
 | `kept` | paths under `%ROOT%` that must exist before the run and be the same tree after it, as the DSH home is |
+| `pending` | the packet the case waits for, one line; the case runs and its differences go to stderr, and once it passes it fails the harness, so the file goes with that packet's merge, as an `#[ignore]` does |
 
 Whether linger is on depends on the host, not on dshd, so it is taken out
 before the comparison: stderr lines starting `dshd: warning: linger is off`
@@ -198,6 +201,15 @@ refused outcomes. The `rm-invocation*` cases are the same fence on `rm`:
 a stopped instance removed after the run named, and the refusals of
 another last run, none, a newer running invocation and the run still
 going, each removing nothing.
+The `release-*` cases pin the release verbs over a directory store whose
+entries the case lays out (`%ROOT%/state/dshd/.releases`, named in
+`%ROOT%/config/dshd/releases`, the fake manager's `XDG_CONFIG_HOME`):
+`release-ls` and `release-ls-text` list what holds each entry,
+`release-rm` removes a name and keeps its entry, `release-prune` removes
+only the entry nothing holds, `release-add` writes an entry from the
+stub's DSH, and `release-add-no-mode` refuses an add that states no
+permission mode. `run-release-directory` creates an instance on a user
+registry name: its roots are plain links, and `nix-store` never runs.
 `attached-elsewhere` is exercised by the real relay in
 `tests/relay/handover.rs`; release updates run in `checks/switch.nix`.
 The complete error kind/exit table is in `src/error/unit_tests.rs`.

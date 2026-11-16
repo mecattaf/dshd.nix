@@ -13,11 +13,12 @@ use lexopt::{Arg, Parser};
 use super::render;
 use crate::cli::{
     AttachArgs, DEFAULT_TIMEOUT_SECS, LabelArgs, LsArgs, NameArgs, READ_DEFAULT_LINES, ReadArgs,
-    RmArgs, RunArgs, StartArgs, StopArgs, UpdateArgs, Verb, WaitArgs,
+    ReleaseAddArgs, ReleaseArgs, RmArgs, RunArgs, StartArgs, StopArgs, UpdateArgs, Verb, WaitArgs,
 };
 use crate::error::Error;
 use crate::name::InstanceName;
 use crate::record::{OsText, Transport};
+use crate::release::user::ReleaseEnvironment;
 
 /// The separator between dshd's flags and the native dsh argv.
 const SEPARATOR: &str = "--";
@@ -39,12 +40,18 @@ pub(super) enum Word {
     Enable,
     Disable,
     Rm,
+    Release,
     Help,
 }
 
+/// The verbs of `dshd release`, closed.
+const RELEASE_VERBS: [&str; 4] = ["add", "ls", "rm", "prune"];
+/// The flags only `release add` takes.
+const RELEASE_ADD_FLAGS: [&str; 4] = ["--dsh", "--permission-mode", "--env", "--unset"];
+
 impl Word {
     /// Every verb, in the order the general help lists them.
-    pub(super) const ALL: [Self; 15] = [
+    pub(super) const ALL: [Self; 16] = [
         Self::Run,
         Self::Start,
         Self::Stop,
@@ -59,6 +66,7 @@ impl Word {
         Self::Enable,
         Self::Disable,
         Self::Rm,
+        Self::Release,
         Self::Help,
     ];
 
@@ -79,6 +87,7 @@ impl Word {
             Self::Enable => "enable",
             Self::Disable => "disable",
             Self::Rm => "rm",
+            Self::Release => "release",
             Self::Help => "help",
         }
     }
@@ -109,6 +118,14 @@ impl Word {
             Self::Read => &["--lines", "--head", "--follow", "--json"],
             Self::Wait => &["--timeout", "--json", "--text"],
             Self::Attach => &["--via", "--open", "--print-url", "--takeover", "--json"],
+            Self::Release => &[
+                "--dsh",
+                "--permission-mode",
+                "--env",
+                "--unset",
+                "--json",
+                "--text",
+            ],
             Self::Help => &[],
             Self::Restart | Self::Ls | Self::Get | Self::Label | Self::Enable | Self::Disable => {
                 &["--json", "--text"]
@@ -135,11 +152,38 @@ struct Raw {
     timeout: Option<OsString>,
     via: Option<OsString>,
     invocation: Option<OsString>,
+    dsh: Option<OsString>,
+    permission_mode: Option<OsString>,
+    envs: Vec<OsString>,
+    unsets: Vec<OsString>,
 }
 
 impl Raw {
     fn has(&self, flag: &str) -> bool {
         self.seen.contains(&flag)
+    }
+
+    /// Records a flag of `release add` with its value.
+    fn release_value(&mut self, flag: &'static str, value: OsString) -> Result<(), Error> {
+        match flag {
+            "--dsh" => {
+                self.mark(flag, true)?;
+                self.dsh = Some(value);
+            }
+            "--permission-mode" => {
+                self.mark(flag, true)?;
+                self.permission_mode = Some(value);
+            }
+            "--env" => {
+                self.mark(flag, false)?;
+                self.envs.push(value);
+            }
+            _ => {
+                self.mark(flag, false)?;
+                self.unsets.push(value);
+            }
+        }
+        Ok(())
     }
 
     /// Records a flag; a flag that takes a value may be given once.
@@ -240,6 +284,10 @@ fn lex(head: Vec<OsString>) -> Result<Raw, Error> {
                 raw.mark("--invocation", true)?;
                 raw.invocation = Some(value(&mut parser)?);
             }
+            Arg::Long(long @ ("dsh" | "permission-mode" | "env" | "unset")) => {
+                let flag = release_flag(long);
+                raw.release_value(flag, value(&mut parser)?)?;
+            }
             Arg::Long("open") => raw.mark("--open", true)?,
             Arg::Long("print-url") => raw.mark("--print-url", true)?,
             Arg::Long("takeover") => raw.mark("--takeover", true)?,
@@ -253,6 +301,16 @@ fn lex(head: Vec<OsString>) -> Result<Raw, Error> {
         }
     }
     Ok(raw)
+}
+
+/// The long spelling of a flag of `release add`, by its name.
+fn release_flag(long: &str) -> &'static str {
+    match long {
+        "dsh" => "--dsh",
+        "permission-mode" => "--permission-mode",
+        "env" => "--env",
+        _ => "--unset",
+    }
 }
 
 fn usage(error: &lexopt::Error) -> Error {
@@ -321,6 +379,7 @@ fn build(raw: Raw, tail: Option<Vec<OsString>>) -> Result<Verb, Error> {
         Word::Attach => attach(&raw, rest).map(Verb::Attach),
         Word::Label => label(rest).map(Verb::Label),
         Word::Ls => no_words(verb, rest).map(|()| Verb::Ls(LsArgs { bare: false })),
+        Word::Release => release(raw, rest).map(Verb::Release),
         Word::Help => help_verb(rest),
     }
 }
@@ -555,6 +614,122 @@ fn attach(raw: &Raw, rest: Vec<OsString>) -> Result<AttachArgs, Error> {
         ));
     }
     Ok(args)
+}
+
+/// `release add|ls|rm|prune`: the second word picks the verb, which
+/// checks the flags it takes.
+fn release(raw: Raw, rest: Vec<OsString>) -> Result<ReleaseArgs, Error> {
+    let mut words = rest.into_iter();
+    let Some(word) = words.next() else {
+        return Err(Error::InvalidArgument(format!(
+            "release needs a verb: {}",
+            RELEASE_VERBS.join(", ")
+        )));
+    };
+    let typed = OsText::new(word).display();
+    if !RELEASE_VERBS.contains(&typed.as_str()) {
+        return Err(Error::InvalidArgument(format!(
+            "unknown release verb {typed}; release takes {}",
+            RELEASE_VERBS.join(", ")
+        )));
+    }
+    let rest: Vec<OsString> = words.collect();
+    if typed != "add"
+        && let Some(flag) = raw
+            .seen
+            .iter()
+            .find(|flag| RELEASE_ADD_FLAGS.contains(flag))
+    {
+        return Err(Error::InvalidArgument(format!(
+            "release {typed} does not take {flag}"
+        )));
+    }
+    let verb = format!("release {typed}");
+    match typed.as_str() {
+        "add" => release_add(raw, rest).map(ReleaseArgs::Add),
+        "rm" => match at_most_one(&verb, rest)? {
+            Some(word) => release_name(word).map(ReleaseArgs::Rm),
+            None => Err(Error::InvalidArgument(
+                "release rm needs the release NAME".into(),
+            )),
+        },
+        "ls" => no_words(&verb, rest).map(|()| ReleaseArgs::Ls),
+        _ => no_words(&verb, rest).map(|()| ReleaseArgs::Prune),
+    }
+}
+
+/// `release add NAME --dsh PATH --permission-mode MODE [--env NAME=VALUE]...
+/// [--unset NAME]...`. The permission mode is never implied.
+fn release_add(raw: Raw, rest: Vec<OsString>) -> Result<ReleaseAddArgs, Error> {
+    let Some(word) = at_most_one("release add", rest)? else {
+        return Err(Error::InvalidArgument(
+            "release add needs the release NAME".into(),
+        ));
+    };
+    let name = release_name(word)?;
+    let Some(dsh) = raw.dsh.filter(|dsh| !dsh.is_empty()) else {
+        return Err(Error::InvalidArgument(
+            "release add needs --dsh PATH, the DSH executable the release runs".into(),
+        ));
+    };
+    let Some(mode) = raw.permission_mode else {
+        return Err(Error::InvalidArgument(
+            "release add needs --permission-mode MODE: a release states the permission mode \
+             DSH runs with, such as workspace-write; there is no default"
+                .into(),
+        ));
+    };
+    let utf8 = |flag: &str, value: OsString| {
+        value.into_string().map_err(|value| {
+            Error::InvalidArgument(format!(
+                "{flag} {} is not UTF-8",
+                OsText::new(value).display()
+            ))
+        })
+    };
+    let permission_mode = utf8("--permission-mode", mode)?;
+    let mut environment = BTreeMap::new();
+    for word in raw.envs {
+        let text = utf8("--env", word)?;
+        let Some((key, value)) = text.split_once('=') else {
+            return Err(Error::InvalidArgument(format!(
+                "--env {text}: expected NAME=VALUE"
+            )));
+        };
+        if environment
+            .insert(key.to_owned(), value.to_owned())
+            .is_some()
+        {
+            return Err(Error::InvalidArgument(format!("--env {key} given twice")));
+        }
+    }
+    let unset = raw
+        .unsets
+        .into_iter()
+        .map(|word| utf8("--unset", word))
+        .collect::<Result<Vec<_>, _>>()?;
+    let environment = ReleaseEnvironment {
+        permission_mode,
+        environment,
+        unset,
+    };
+    environment.check()?;
+    Ok(ReleaseAddArgs {
+        name,
+        dsh: PathBuf::from(dsh),
+        environment,
+    })
+}
+
+/// A release NAME: the instance-name grammar, as the registry's names.
+fn release_name(word: OsString) -> Result<InstanceName, Error> {
+    let typed = OsText::new(word).display();
+    InstanceName::parse(&typed).map_err(|error| match error {
+        Error::InvalidName { name, reason } => {
+            Error::InvalidArgument(format!("invalid release name {name:?}: {reason}"))
+        }
+        other => other,
+    })
 }
 
 fn help_verb(rest: Vec<OsString>) -> Result<Verb, Error> {

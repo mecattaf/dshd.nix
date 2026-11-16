@@ -136,6 +136,13 @@ release name), `dshd label web-1 owner=ci` (an empty value removes a
 label), `dshd enable web-1` and `dshd disable web-1` (start with the user
 manager), `dshd rm web-1` (delete a stopped instance), `dshd help run`.
 
+Releases without Nix: `dshd release add stable --dsh /usr/local/bin/dsh --permission-mode workspace-write`
+writes a read-only entry and points the name `stable` at it; `--release stable`
+then uses it. The permission mode is required: there is no default.
+`dshd release ls` lists entries and what holds each, `dshd release rm stable`
+removes only the name, and `dshd release prune` removes the entries nothing
+holds. Nothing prunes on its own.
+
 `dshd get --json NAME` includes native CPU, memory, tasks and IO counters
 under `resources`; unavailable counters are `null`. For lane history use
 `journalctl --user -u dshd@NAME.service -o json`; lifecycle records share
@@ -191,6 +198,11 @@ resource totals. Use `-u 'dshd@*.service'` for every lane.
   disabled, already-disabled, removed, labelled, ended, still-running.
 - `attach --json` for web: `{"origin","port","urlFile"}`, plus `url` with
   `--print-url`.
+- `release add` and `release rm`: `{"outcome","name","entry","previous","created","warnings"}`,
+  `outcome` one of added, unchanged, removed. `release ls`:
+  `{"store","registry","entries":[{"path","label","names","current","booted"}],"names":[{"name","target"}],"warnings"}`.
+  `release prune`: `{"outcome","pruned","kept","warnings"}`, `outcome`
+  pruned or unchanged.
 - Errors on stderr: `{"error":{"kind","message","hint"}}`. `hint` is the
   command to run next, when there is one.
 

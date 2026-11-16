@@ -95,7 +95,7 @@ fn foreground(ctx: &Context, instance: &Instance, shown: Shown, timeout: u64) ->
 /// choice and the creation, never a systemctl call.
 fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool, Option<String>), Error> {
     let release_given = args.release.is_some();
-    let release = release::resolve(Path::new(name::RELEASES_DIR), args.release.as_deref())?;
+    let release = release::resolve_in(&ctx.registries(), args.release.as_deref())?;
     let cwd = match &args.cwd {
         Some(dir) => fsx::canonical_dir(&ctx.cwd.join(dir))?,
         None => fsx::canonical_dir(&ctx.cwd)?,

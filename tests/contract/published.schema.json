@@ -588,6 +588,190 @@
       ],
       "additionalProperties": false
     },
+    "releaseOutcomeSlug": {
+      "type": "string",
+      "enum": [
+        "added",
+        "unchanged",
+        "removed",
+        "pruned"
+      ]
+    },
+    "releaseChange": {
+      "type": "object",
+      "description": "dshd release add and dshd release rm: one user registry name",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/releaseOutcomeSlug"
+        },
+        "name": {
+          "type": "string"
+        },
+        "entry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created": {
+          "type": "boolean"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "outcome",
+        "name",
+        "entry",
+        "previous",
+        "created",
+        "warnings"
+      ],
+      "additionalProperties": false
+    },
+    "releaseList": {
+      "type": "object",
+      "description": "dshd release ls: the directory store and the user registry",
+      "properties": {
+        "store": {
+          "type": "string"
+        },
+        "registry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/releaseEntry"
+          }
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/releaseName"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "store",
+        "registry",
+        "entries",
+        "names",
+        "warnings"
+      ],
+      "additionalProperties": false
+    },
+    "releaseEntry": {
+      "type": "object",
+      "description": "one entry of the directory store and what holds it",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "current": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "booted": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "label",
+        "names",
+        "current",
+        "booted"
+      ],
+      "additionalProperties": false
+    },
+    "releaseName": {
+      "type": "object",
+      "description": "one name of the user registry; target is null when it dangles",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "releasePrune": {
+      "type": "object",
+      "description": "dshd release prune",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/releaseOutcomeSlug"
+        },
+        "pruned": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kept": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "outcome",
+        "pruned",
+        "kept",
+        "warnings"
+      ],
+      "additionalProperties": false
+    },
     "error": {
       "type": "object",
       "description": "every error, on stderr, in JSON mode",

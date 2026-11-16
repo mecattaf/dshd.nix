@@ -64,23 +64,36 @@ pub enum AfterExit {
 /// was sent (it then never restarts); `stop_intent` when a stop was asked.
 #[must_use]
 pub fn after_exit(status: u8, signalled: bool, stop_intent: bool) -> AfterExit {
-    let _ = (signalled, stop_intent);
-    AfterExit::Exit(status)
+    if status == RESTART_STATUS && !signalled && !stop_intent {
+        AfterExit::Restart(RESTART_DELAY)
+    } else {
+        AfterExit::Exit(status)
+    }
 }
 
 /// Whether one more start at `now` is within `limit`; always true when
 /// `limit` is `None`. Starts older than the interval do not count.
 #[must_use]
 pub fn admits(history: &StartHistory, now: u64, limit: Option<StartLimit>) -> bool {
-    let _ = (history, now, limit);
-    true
+    limit.is_none_or(|limit| {
+        let recent = history
+            .starts
+            .iter()
+            .filter(|start| start.at.saturating_add(limit.interval_secs) > now)
+            .count();
+        recent < usize::try_from(limit.burst).unwrap_or(usize::MAX)
+    })
 }
 
 /// The number of automatic restarts in the history, as `NRestarts`.
 #[must_use]
 pub fn restarts(history: &StartHistory) -> u32 {
-    let _ = history;
-    0
+    let automatic = history
+        .starts
+        .iter()
+        .filter(|start| start.automatic)
+        .count();
+    u32::try_from(automatic).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]

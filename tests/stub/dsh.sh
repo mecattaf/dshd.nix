@@ -225,10 +225,18 @@ serve_web() {
 	printf 'dsh web: http://127.0.0.1:%s/?token=stub%s\n' "$port" "$$"
 }
 
+# A stop that arrives before the sleeper's pid is known is noted and acted
+# on once it is: a trap runs between commands, so one that ran right after
+# the sleeper started, before sleeper=$!, would leave it running.
 wait_for_stop() {
-	trap 'kill "${sleeper-}" 2>/dev/null; exit 0' TERM INT
+	trap 'stopped=1' TERM INT
 	sleep 2147483647 </dev/null >/dev/null 2>&1 &
 	sleeper=$!
+	trap 'kill "$sleeper" 2>/dev/null; exit 0' TERM INT
+	if [ -n "${stopped-}" ]; then
+		kill "$sleeper" 2>/dev/null
+		exit 0
+	fi
 	wait "$sleeper"
 	exit 0
 }

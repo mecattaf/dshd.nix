@@ -137,7 +137,6 @@ fn is_entry_needs_the_shape_and_the_place() {
 
 // catches: a registry name not re-pointed, or a missing name read as an error
 #[test]
-#[ignore = "packet D17: release registry and prune"]
 fn the_registry_points_names_at_entries() {
     let fixture = inputs("store-registry");
     let registry = fixture.scratch.path().join("config/releases");
@@ -153,7 +152,6 @@ fn the_registry_points_names_at_entries() {
 
 // catches: prune removing an entry a registry name or an instance still holds
 #[test]
-#[ignore = "packet D17: release registry and prune"]
 fn prune_keeps_every_held_entry() {
     let entries: Vec<PathBuf> = ["/s/c", "/s/a", "/s/b"].iter().map(PathBuf::from).collect();
     let held: BTreeSet<PathBuf> = [PathBuf::from("/s/b")].into_iter().collect();

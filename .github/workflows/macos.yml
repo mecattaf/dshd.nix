@@ -1,0 +1,188 @@
+# dshd and dshd-run for Apple silicon, built and tested on a macOS runner.
+#
+# Every push builds the branch on an arm64 macOS runner: clippy with
+# -D warnings and the unit tests run natively, the integration tests run as
+# a record (they assume the systemd user manager and do not gate the job),
+# and the release binaries are uploaded as one artifact. The artifact is a
+# tarball laid out as the macOS install is, bin/dshd and
+# libexec/dshd/dshd-run, so tests/mac/acceptance.sh can take it as it is.
+#
+# The binaries are signed ad hoc by Apple's linker, which arm64 macOS
+# requires to run them; they carry no Developer ID signature and are not
+# notarized. The job checks that they link only system libraries
+# (/usr/lib and /System) and hold no Nix store path.
+#
+# The toolchain is pinned to the one the cross-target clippy runs with on
+# Linux, so both report the same lints. A second job runs shellcheck and the
+# self-test of the Mac test kit (tests/mac) on Linux.
+name: macos
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: "1.97.1"
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  arm64:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Runner facts
+        run: |
+          sw_vers
+          uname -m
+          id -un
+          if launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+            echo "gui/$(id -u): present"
+          else
+            echo "gui/$(id -u): absent"
+          fi
+          if command -v nix >/dev/null 2>&1; then echo "nix: $(command -v nix)"; else echo "nix: absent"; fi
+
+      - name: Toolchain
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy
+          rustc --version --verbose
+          cargo --version
+
+      - name: Fetch
+        run: cargo fetch --locked
+
+      - name: Clippy
+        run: cargo clippy --locked --offline --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --locked --offline --lib --bins
+
+      - name: Integration tests (a record, not a gate)
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          export PATH="$PWD/tests/stub:$PATH"
+          cargo test --locked --offline --test '*' --no-fail-fast
+
+      - name: Build
+        run: cargo build --locked --offline --release --bins
+
+      - name: Lay out, inspect and pack
+        run: |
+          name="dshd-aarch64-apple-darwin-${GITHUB_SHA:0:12}"
+          root="dist/$name"
+          mkdir -p "$root/bin" "$root/libexec/dshd"
+          install -m 0755 target/release/dshd "$root/bin/dshd"
+          install -m 0755 target/release/dshd-run "$root/libexec/dshd/dshd-run"
+          install -m 0644 LICENSE NOTICE "$root/"
+          {
+            echo "commit $GITHUB_SHA"
+            echo "ref $GITHUB_REF"
+            echo "run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            rustc --version
+            sw_vers | tr -s '\t' ' '
+          } >"$root/BUILDINFO"
+          bad=0
+          for binary in "$root/bin/dshd" "$root/libexec/dshd/dshd-run"; do
+            echo "== $binary"
+            lipo -archs "$binary"
+            otool -L "$binary"
+            codesign --verify --verbose=2 "$binary"
+            codesign --display --verbose=2 "$binary" 2>&1 | grep -E '^(Identifier|Format|CodeDirectory|Signature)'
+            otool -l "$binary" | grep -A3 LC_BUILD_VERSION | grep -E 'minos|sdk'
+            while read -r library _; do
+              case $library in
+                /usr/lib/* | /System/*) ;;
+                *)
+                  echo "links outside the system: $library"
+                  bad=1
+                  ;;
+              esac
+            done < <(otool -L "$binary" | tail -n +2)
+            # dshd knows the string /nix/store (the Linux release paths);
+            # a Nix-built binary would hold a store path with its hash.
+            if grep -a -q -E '/nix/store/[0-9a-z]{32}-' "$binary"; then
+              echo "holds a /nix/store path"
+              bad=1
+            fi
+          done
+          [ "$bad" = 0 ]
+          "$root/bin/dshd" --version
+          (cd "$root" && shasum -a 256 bin/dshd libexec/dshd/dshd-run >SHA256SUMS)
+          cat "$root/SHA256SUMS"
+          COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C dist -czf "dist/$name.tar.gz" "$name"
+          shasum -a 256 "dist/$name.tar.gz" | tee "dist/$name.tar.gz.sha256"
+          echo "TARBALL=dist/$name.tar.gz" >>"$GITHUB_ENV"
+          echo "LAYOUT=$root" >>"$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dshd-aarch64-apple-darwin
+          path: |
+            ${{ env.TARBALL }}
+            ${{ env.TARBALL }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      # The Mac test kit against these binaries and the stub DSH, on a
+      # runner that has a GUI login session. Until the launchd verbs are
+      # built it fails at release add; its table and captures are kept.
+      - name: Mac test kit (a record, not a gate)
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          mkdir -p dist/kit
+          bash tests/mac/acceptance.sh run --dshd "$LAYOUT/bin/dshd" --dsh tests/stub/dsh.sh \
+            --captures dist/kit/captures --capture-domain 2>dist/kit/progress.txt | tee dist/kit/table.txt
+          exit "${PIPESTATUS[0]}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mac-test-kit-record
+          path: dist/kit
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # The kit's own test on Linux, and shellcheck over the kit.
+  kit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The image's shellcheck is older than the one the kit is checked
+      # with; this pins that release by its checksum.
+      - name: Shellcheck
+        env:
+          SHELLCHECK_VERSION: v0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/$SHELLCHECK_VERSION/shellcheck-$SHELLCHECK_VERSION.linux.x86_64.tar.xz"
+          echo "$SHELLCHECK_SHA256  $RUNNER_TEMP/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION/shellcheck" --version
+          "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION/shellcheck" tests/mac/acceptance.sh tests/mac/selftest.sh \
+            tests/mac/fake/dshd tests/mac/fake/dshd-run tests/mac/fake/macos-tools.sh
+
+      - name: Self-test
+        run: bash tests/mac/selftest.sh

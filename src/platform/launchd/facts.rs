@@ -30,8 +30,8 @@
 //! `wanted_by` `[dshd.target]` when the `LaunchAgents` copy exists, so
 //! `UnitFacts::enabled` holds; `resources` all unknown (`None`).
 
-use crate::platform::launchd::print::JobFacts;
-use crate::platform::launchd::runstate::RunState;
+use crate::platform::launchd::print::{JobFacts, JobState, LastExit};
+use crate::platform::launchd::runstate::{self, Phase, RunState};
 use crate::record::LastRun;
 use crate::systemctl::{ActiveState, LoadState, Resources, UnitFacts, UnitResult};
 
@@ -58,22 +58,93 @@ pub struct Observed {
 /// in the module documentation.
 #[must_use]
 pub fn unit_facts(unit: &str, observed: &Observed) -> UnitFacts {
-    let _ = (observed, crate::systemctl::unit_result);
+    let job = observed.job.as_ref();
+    let job_pid = job.and_then(|job| job.pid);
+    let live = observed
+        .state
+        .as_ref()
+        .filter(|state| runstate::is_live(state, job_pid, observed.process_start));
+
+    let phase = live.map(|state| (state.phase, state.phase_since));
+    let active_enter = phase
+        .filter(|(phase, _)| matches!(phase, Phase::Ready | Phase::Stopping))
+        .map(|(_, since)| since);
+    let inactive_enter = match phase {
+        Some((Phase::Starting | Phase::AutoRestart, since)) => Some(since),
+        _ => observed
+            .last_run
+            .as_ref()
+            .and_then(|run| run.end.as_ref())
+            .map(|end| end.ended_at),
+    };
+
+    let (active_state, sub_state) = match live {
+        Some(state) => match state.phase {
+            Phase::Starting => (ActiveState::Activating, "start"),
+            Phase::Ready => (ActiveState::Active, "running"),
+            Phase::AutoRestart => (ActiveState::Activating, "auto-restart"),
+            Phase::Stopping => (ActiveState::Deactivating, "stop-sigterm"),
+        },
+        None if job_pid.is_some() => (ActiveState::Activating, "start"),
+        None => match job.and_then(|job| match &job.state {
+            JobState::Other(word) => Some(word),
+            _ => None,
+        }) {
+            Some(word) => (ActiveState::Unknown(word.clone()), word.as_str()),
+            None if unclean_end(observed) => (ActiveState::Failed, "failed"),
+            None => (ActiveState::Inactive, "dead"),
+        },
+    };
+
+    let load_state = if observed.disabled {
+        LoadState::Masked
+    } else if observed.job.is_some() {
+        LoadState::Loaded
+    } else {
+        LoadState::NotFound
+    };
+
     UnitFacts {
         unit: unit.to_owned(),
-        load_state: LoadState::Unknown("not built".to_owned()),
-        active_state: ActiveState::Unknown("not built".to_owned()),
-        sub_state: String::new(),
-        result: UnitResult::Unknown("not built".to_owned()),
-        main_pid: 0,
-        exec_main_status: 0,
-        restarts: 0,
-        active_enter: None,
-        inactive_enter: None,
-        invocation_id: String::new(),
-        wanted_by: Vec::new(),
+        load_state,
+        active_state,
+        sub_state: sub_state.to_owned(),
+        result: observed
+            .last_run
+            .as_ref()
+            .and_then(|run| run.end.as_ref())
+            .map_or(UnitResult::Success, |end| {
+                crate::systemctl::unit_result(&end.service_result)
+            }),
+        main_pid: job_pid.unwrap_or(0),
+        exec_main_status: job
+            .and_then(|job| job.last_exit)
+            .map_or(0, |exit| match exit {
+                LastExit::Code(code) => code,
+                LastExit::Signal(signal) => signal,
+                LastExit::Never => 0,
+            }),
+        restarts: observed.restarts,
+        active_enter,
+        inactive_enter,
+        invocation_id: live
+            .map(|state| state.invocation_id.clone())
+            .unwrap_or_default(),
+        wanted_by: if observed.enabled_copy {
+            vec!["dshd.target".to_owned()]
+        } else {
+            Vec::new()
+        },
         resources: Resources::default(),
     }
+}
+
+fn unclean_end(observed: &Observed) -> bool {
+    observed
+        .last_run
+        .as_ref()
+        .and_then(|run| run.end.as_ref())
+        .is_some_and(|end| end.service_result != "success")
 }
 
 #[cfg(test)]

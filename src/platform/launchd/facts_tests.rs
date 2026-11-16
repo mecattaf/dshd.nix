@@ -91,7 +91,6 @@ fn slug(facts: &UnitFacts, observed: &Observed, boot: &str) -> StateSlug {
 
 // catches: a ready run not reported running, or reported without its pid, invocation or since
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn a_ready_run_is_active() {
     let observed = live(Phase::Ready);
     let facts = unit_facts(UNIT, &observed);
@@ -108,7 +107,6 @@ fn a_ready_run_is_active() {
 
 // catches: a run still starting, between crash restarts, or stopping read as running or as stopped
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn moving_runs_are_activating_or_deactivating() {
     let rows = [
         (
@@ -144,7 +142,6 @@ fn moving_runs_are_activating_or_deactivating() {
 
 // catches: a state file left by an earlier process (pid reused, or no state yet) taken as the live run's identity
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn a_stale_state_file_names_no_run() {
     let reused = Observed {
         process_start: Some(START + 500),
@@ -169,7 +166,6 @@ fn a_stale_state_file_names_no_run() {
 
 // catches: a clean end read as failed, a run of an earlier boot read as this boot's, or the end time lost
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn a_clean_end_is_stopped_or_previous_boot() {
     for job in [Some(ended_job(LastExit::Code(0))), None] {
         let observed = Observed {
@@ -199,7 +195,6 @@ fn a_clean_end_is_stopped_or_previous_boot() {
 
 // catches: a failed or start-limited run read as stopped, or its result word lost
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn an_unclean_end_is_failed() {
     let rows = [
         ("exit-code", UnitResult::ExitCode),
@@ -224,7 +219,6 @@ fn an_unclean_end_is_failed() {
 
 // catches: a run whose runner died before recording its end not reported interrupted
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn a_run_without_an_end_is_interrupted() {
     let observed = Observed {
         job: Some(ended_job(LastExit::Signal(9))),
@@ -239,7 +233,6 @@ fn a_run_without_an_end_is_interrupted() {
 
 // catches: a job the user disabled with launchctl not reported masked
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn a_disabled_job_is_masked() {
     let observed = Observed {
         disabled: true,
@@ -253,7 +246,6 @@ fn a_disabled_job_is_masked() {
 
 // catches: an enabled instance (its LaunchAgents copy exists) not reported enabled, or a plain one reported enabled
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn the_copy_makes_the_instance_enabled() {
     let enabled = unit_facts(
         UNIT,
@@ -269,7 +261,6 @@ fn the_copy_makes_the_instance_enabled() {
 
 // catches: a state word launchctl printed that this version does not know mapped onto a known state
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn an_unknown_job_state_is_unknown() {
     let observed = Observed {
         job: Some(JobFacts {
@@ -292,7 +283,6 @@ fn an_unknown_job_state_is_unknown() {
 
 // catches: restarts dropped, or invented resource counters (the contract allows null, never a made-up zero)
 #[test]
-#[ignore = "packet D07: launchd facts mapping"]
 fn restarts_pass_through_and_counters_stay_unknown() {
     let facts = unit_facts(
         UNIT,

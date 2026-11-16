@@ -8,7 +8,6 @@ const ID: &str = "0123456789abcdef0123456789abcdef";
 
 // catches: a ready run read without its state file's invocation, or the LaunchAgents copy not making it enabled
 #[test]
-#[ignore = "packet D15: launchd fact gathering"]
 fn show_reads_the_job_and_the_run_files() {
     let bench = Bench::new("ld-query-show", "web-1");
     bench
@@ -29,7 +28,6 @@ fn show_reads_the_job_and_the_run_files() {
 
 // catches: a disabled label not read as masked, or a missing job read as an error
 #[test]
-#[ignore = "packet D15: launchd fact gathering"]
 fn show_of_a_disabled_absent_job_is_masked() {
     let bench = Bench::new("ld-query-masked", "web-1");
     bench
@@ -44,7 +42,6 @@ fn show_of_a_disabled_absent_job_is_masked() {
 
 // catches: `ls` paying one launchctl call per instance, or facts returned out of order
 #[test]
-#[ignore = "packet D15: launchd fact gathering"]
 fn show_many_makes_two_calls_in_all() {
     let bench = Bench::new("ld-query-many", "web-1");
     let other = InstanceName::parse("api").unwrap();
@@ -69,7 +66,6 @@ fn show_many_makes_two_calls_in_all() {
 
 // catches: other users' or apps' jobs, or labels that are not instance names, listed as instances
 #[test]
-#[ignore = "packet D15: launchd fact gathering"]
 fn list_loaded_keeps_only_dshd_instances() {
     let bench = Bench::new("ld-query-list", "web-1");
     for label in [
@@ -88,7 +84,6 @@ fn list_loaded_keeps_only_dshd_instances() {
 
 // catches: no GUI login session reported as anything but exit 7
 #[test]
-#[ignore = "packet D15: launchd fact gathering"]
 fn no_gui_session_exits_7() {
     let bench = Bench::new("ld-query-nogui", "web-1");
     bench.fake.state().no_gui_domain = true;

@@ -10,10 +10,11 @@
 # The binaries are signed ad hoc by Apple's linker, which arm64 macOS
 # requires to run them; they carry no Developer ID signature and are not
 # notarized. The job checks that they link only system libraries
-# (/usr/lib and /System) and hold no /nix/store path.
+# (/usr/lib and /System) and hold no Nix store path.
 #
 # The toolchain is pinned to the one the cross-target clippy runs with on
-# Linux, so both report the same lints.
+# Linux, so both report the same lints. A second job runs shellcheck and the
+# self-test of the Mac test kit (tests/mac) on Linux.
 name: macos
 
 on:
@@ -114,7 +115,9 @@ jobs:
                   ;;
               esac
             done < <(otool -L "$binary" | tail -n +2)
-            if grep -a -q /nix/store "$binary"; then
+            # dshd knows the string /nix/store (the Linux release paths);
+            # a Nix-built binary would hold a store path with its hash.
+            if grep -a -q -E '/nix/store/[0-9a-z]{32}-' "$binary"; then
               echo "holds a /nix/store path"
               bad=1
             fi
@@ -126,6 +129,7 @@ jobs:
           COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C dist -czf "dist/$name.tar.gz" "$name"
           shasum -a 256 "dist/$name.tar.gz" | tee "dist/$name.tar.gz.sha256"
           echo "TARBALL=dist/$name.tar.gz" >>"$GITHUB_ENV"
+          echo "LAYOUT=$root" >>"$GITHUB_ENV"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -135,3 +139,38 @@ jobs:
             ${{ env.TARBALL }}.sha256
           if-no-files-found: error
           retention-days: 30
+
+      # The Mac test kit against these binaries and the stub DSH, on a
+      # runner that has a GUI login session. Until the launchd verbs are
+      # built it fails at release add; its table and captures are kept.
+      - name: Mac test kit (a record, not a gate)
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          mkdir -p dist/kit
+          bash tests/mac/acceptance.sh run --dshd "$LAYOUT/bin/dshd" --dsh tests/stub/dsh.sh \
+            --captures dist/kit/captures --capture-domain 2>dist/kit/progress.txt | tee dist/kit/table.txt
+          exit "${PIPESTATUS[0]}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mac-test-kit-record
+          path: dist/kit
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # The kit's own test on Linux, and shellcheck over the kit.
+  kit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shellcheck
+        run: shellcheck tests/mac/acceptance.sh tests/mac/selftest.sh tests/mac/fake/dshd tests/mac/fake/dshd-run tests/mac/fake/macos-tools.sh
+
+      - name: Self-test
+        run: bash tests/mac/selftest.sh

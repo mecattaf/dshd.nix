@@ -139,7 +139,9 @@ fn active_state(value: &str) -> ActiveState {
     }
 }
 
-fn unit_result(value: &str) -> UnitResult {
+/// A `Result=` word as a [`UnitResult`]; a word this version does not
+/// know is kept as `Unknown`.
+pub(crate) fn unit_result(value: &str) -> UnitResult {
     match value {
         "success" => UnitResult::Success,
         "exit-code" => UnitResult::ExitCode,

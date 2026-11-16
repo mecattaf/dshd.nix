@@ -58,7 +58,7 @@ pub struct Observed {
 /// in the module documentation.
 #[must_use]
 pub fn unit_facts(unit: &str, observed: &Observed) -> UnitFacts {
-    let _ = observed;
+    let _ = (observed, crate::systemctl::unit_result);
     UnitFacts {
         unit: unit.to_owned(),
         load_state: LoadState::Unknown("not built".to_owned()),

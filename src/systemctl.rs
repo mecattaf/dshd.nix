@@ -23,6 +23,7 @@ use serde::Serialize;
 
 mod parse;
 
+pub(crate) use self::parse::unit_result;
 use self::parse::{parse_environment, parse_list_units, persistent_unit_dir, unit_facts};
 
 /// The kernel's id of the running boot.

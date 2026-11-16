@@ -523,6 +523,9 @@ fn probe_relay(ctx: &Context, instance: &Instance) -> Result<ProbeLine, Error> {
     ];
     let mut command = runner.command();
     command.args(&args).envs(ctx.manager.relay_client_env());
+    if let Some(dir) = ctx.manager.relay_client_dir(&instance.name) {
+        command.current_dir(dir);
+    }
     let (sender, receiver) = mpsc::channel();
     let probing =
         |kind: io::ErrorKind| Error::io("probe", runner.program.clone(), io::Error::from(kind));

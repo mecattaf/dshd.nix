@@ -76,6 +76,15 @@ pub trait ServiceManager: fmt::Debug {
     /// needs to find the relay of a run.
     fn relay_client_env(&self) -> Vec<(OsString, OsString)>;
 
+    /// The working directory the relay client starts in, when the manager
+    /// locates the relay through it: the instance directory on macOS,
+    /// where the client takes its instance from its working directory as
+    /// the runner does. `None` (the caller's own) where the variables of
+    /// [`ServiceManager::relay_client_env`] locate it.
+    fn relay_client_dir(&self, _name: &InstanceName) -> Option<PathBuf> {
+        None
+    }
+
     /// How the manager names the instance: the `unit` field of `get` and
     /// `ls` (`dshd@NAME.service`, or `gui/UID/dshd.NAME`).
     fn unit_id(&self, name: &InstanceName) -> String;

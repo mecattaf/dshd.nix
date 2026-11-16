@@ -159,6 +159,9 @@ fn attach(ctx: &Context, instance: &Instance, takeover: bool) -> Error {
         .arg(instance.name.as_str())
         .envs(ctx.manager.relay_client_env())
         .stdin(Stdio::inherit());
+    if let Some(dir) = ctx.manager.relay_client_dir(&instance.name) {
+        command.current_dir(dir);
+    }
     if takeover {
         command.arg("--takeover");
     }

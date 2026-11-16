@@ -312,6 +312,10 @@ impl ServiceManager for LaunchdManager {
         Vec::new()
     }
 
+    fn relay_client_dir(&self, name: &InstanceName) -> Option<PathBuf> {
+        Some(self.instance_dir(name).path().to_path_buf())
+    }
+
     fn unit_id(&self, name: &InstanceName) -> String {
         self.service_target(name)
     }

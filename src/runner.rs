@@ -16,6 +16,7 @@
 
 mod cgroup;
 mod completion;
+mod launchd;
 
 pub mod exit;
 pub mod notify;
@@ -78,9 +79,14 @@ const OUTPUT_DRAIN: Duration = Duration::from_secs(1);
 /// The status DSH's restart button exits with.
 const DSH_RESTART: i32 = 42;
 
-/// `dshd-run run NAME`: the unit's main process until `dsh` ends.
+/// `dshd-run run NAME`: the unit's main process until `dsh` ends. On
+/// macOS the job's main process under launchd, which also does what
+/// systemd does around the runner on Linux (see `runner::launchd`).
 #[must_use]
 pub fn run(name: &str) -> u8 {
+    if cfg!(target_os = "macos") {
+        return launchd::run(name);
+    }
     out::error_line(RUN_STARTED);
     // Before any thread exists, so every thread inherits the mask and only
     // the main thread's sigwait receives a stop or the child's end.
@@ -142,6 +148,7 @@ fn spawn_thread(name: &'static str, body: impl FnOnce() + Send + 'static) -> Res
 }
 
 /// Where one instance lives, as the unit hands it to the runner.
+#[derive(Debug, Clone)]
 struct Place {
     name: InstanceName,
     root: StateRoot,
@@ -168,6 +175,22 @@ impl Place {
             root,
             name,
             runtime: RuntimeDir::new(runtime),
+        })
+    }
+
+    /// Under launchd the job's working directory is the instance directory
+    /// (the plist's `WorkingDirectory`), and the run's files live in its
+    /// `run` directory, which is created 0700 when missing.
+    fn from_launchd(raw: &str) -> Result<Self, Error> {
+        let (name, root) = located(raw)?;
+        let dir = root.instance(&name);
+        let runtime = RuntimeDir::new(dir.path().join(crate::platform::launchd::RUN_DIR));
+        fsx::create_dir_private(runtime.path())?;
+        Ok(Self {
+            name,
+            root,
+            dir,
+            runtime,
         })
     }
 

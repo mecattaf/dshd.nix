@@ -93,6 +93,19 @@
   unloads an ended unit, `since` falls back to `lastRun.endedAt`.
 - `run` refuses a `--patch` launcher flag with an empty value, which every
   start of the instance would fail on.
+- `dshd release add|ls|rm|prune`, releases for a machine without Nix.
+  `release add NAME --dsh PATH --permission-mode MODE` writes a read-only
+  entry under `%S/dshd/.releases` (a link to that DSH, a copy of the runner
+  installed with `dshd`, and `release.json`) and points the user registry
+  name `$XDG_CONFIG_HOME/dshd/releases/NAME` at it; the permission mode is
+  required, with no default. `run --release NAME` reads the user registry
+  only for a name `/etc/dshd/releases` does not hold, and takes an entry's
+  path too. An entry's `current` and `booted` roots are plain links, with
+  no `nix-store`, and `update` prints its labels in place of a closure
+  difference. `release rm` removes a name, `release prune` the entries
+  nothing holds; nothing prunes on its own. The release verbs print the new
+  `releaseChange`, `releaseList` and `releasePrune` objects; no existing
+  field, vocabulary or exit code changes.
 - `dshd-run`, the per-release runner: spawns `dsh` with the recorded argv,
   working directory and environment, reports readiness to systemd, keeps a
   web instance's origin and default port, and relays an ACP instance's stdio to one

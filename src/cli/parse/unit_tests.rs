@@ -347,6 +347,123 @@ fn rm_invocation_parses() {
     assert_eq!(exit(&["rm", "--invocation", id]), 2, "the id is not a NAME");
 }
 
+// catches: release add without a stated permission mode or a DSH, its flags lost or taken by another
+// release verb, or a release name outside the registry grammar accepted
+#[test]
+fn release_arguments_parse() {
+    let Verb::Release(ReleaseArgs::Add(add)) = verb(&[
+        "release",
+        "add",
+        "stable",
+        "--dsh",
+        "bin/dsh",
+        "--permission-mode=workspace-write",
+        "--env",
+        "DSH_TELEMETRY_DISABLED=1",
+        "--env",
+        "EMPTY=",
+        "--unset",
+        "OPENAI_API_KEY",
+        "--json",
+    ]) else {
+        panic!("not release add");
+    };
+    assert_eq!(add.name, name("stable"));
+    assert_eq!(add.dsh, PathBuf::from("bin/dsh"));
+    assert_eq!(add.environment.permission_mode, "workspace-write");
+    assert_eq!(
+        add.environment.environment,
+        BTreeMap::from([
+            ("DSH_TELEMETRY_DISABLED".to_owned(), "1".to_owned()),
+            ("EMPTY".to_owned(), String::new()),
+        ])
+    );
+    assert_eq!(add.environment.unset, ["OPENAI_API_KEY"]);
+    assert_eq!(verb(&["release", "ls"]), Verb::Release(ReleaseArgs::Ls));
+    assert_eq!(
+        verb(&["release", "--text", "rm", "stable"]),
+        Verb::Release(ReleaseArgs::Rm(name("stable")))
+    );
+    assert_eq!(
+        verb(&["release", "prune"]),
+        Verb::Release(ReleaseArgs::Prune)
+    );
+    assert_eq!(
+        verb(&["release", "add", "--help"]),
+        Verb::Help(Some("release".to_owned()))
+    );
+}
+
+// catches: release add accepted without a stated permission mode or a DSH, with a malformed --env, or a
+// release verb taking another's flags or words
+#[test]
+fn release_refusals_are_exit_2() {
+    let add = |rest: &[&str]| {
+        let mut args = vec!["release", "add"];
+        args.extend_from_slice(rest);
+        kind(&args)
+    };
+    for refused in [
+        &["stable", "--dsh", "d"][..],
+        &["stable", "--permission-mode", "read-only"],
+        &["stable", "--dsh", "", "--permission-mode", "read-only"],
+        &["--dsh", "d", "--permission-mode", "read-only"],
+        &["Stable", "--dsh", "d", "--permission-mode", "read-only"],
+        &["a", "b", "--dsh", "d", "--permission-mode", "read-only"],
+        &["stable", "--dsh", "d", "--permission-mode", ""],
+        &[
+            "stable",
+            "--dsh",
+            "d",
+            "--permission-mode",
+            "read-only",
+            "--env",
+            "X",
+        ],
+        &[
+            "stable",
+            "--dsh",
+            "d",
+            "--permission-mode",
+            "read-only",
+            "--env",
+            "DSH_PERMISSION_MODE=x",
+        ],
+        &[
+            "stable",
+            "--dsh",
+            "d",
+            "--permission-mode",
+            "read-only",
+            "--unset",
+            "DSH_HOME",
+        ],
+        &[
+            "stable",
+            "--dsh",
+            "d",
+            "--dsh",
+            "e",
+            "--permission-mode",
+            "read-only",
+        ],
+    ] {
+        assert_eq!(add(refused), "invalid-argument", "{refused:?}");
+    }
+    for refused in [
+        &["release"][..],
+        &["release", "list"],
+        &["release", "ls", "stable"],
+        &["release", "rm"],
+        &["release", "prune", "--dsh", "d"],
+        &["release", "rm", "stable", "--permission-mode", "x"],
+        &["release", "ls", "--", "x"],
+        &["ls", "--dsh", "d"],
+    ] {
+        assert_eq!(exit(refused), 2, "{refused:?}");
+    }
+}
+
 // catches: a bad flag, a flag on the wrong verb or a stray word accepted instead of exit 2
 #[test]
 fn unknown_flag_is_exit_2() {

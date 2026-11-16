@@ -24,6 +24,9 @@
 #                      directory of --dshd, else dshd-run beside it
 #   --dsh FILE         a stock DSH, or tests/stub/dsh.sh; used where it is,
 #                      never copied or changed
+#   --permission-mode MODE
+#                      the permission mode the kit's release states, which
+#                      release add requires; default workspace-write
 #   --prefix WORD      the instance prefix, 1 to 8 letters a-z; default zzt
 #   --path DIR         a directory DSH needs on PATH (its interpreter),
 #                      put after the system directories
@@ -40,10 +43,11 @@
 # Everything the kit makes lives in /tmp/dshd-PREFIX.XXXXXX (the binaries,
 # DSH_HOME, the working directory), except what dshd itself writes:
 # ~/.local/state/dshd/PREFIX-*, ~/.local/state/dshd/.releases, the release
-# name, and during a logout hold ~/Library/LaunchAgents/dshd.PREFIX-web.plist.
-# The clean-up removes them through dshd, then sweeps what dshd left and
-# reports it as a failure, and removes the state root when it did not
-# exist before. dshd runs with PATH limited to the prefix's bin and the
+# name ~/.config/dshd/releases/PREFIX, and during a logout hold
+# ~/Library/LaunchAgents/dshd.PREFIX-web.plist. The clean-up removes them
+# through dshd, then sweeps what dshd left and reports it as a failure, and
+# removes the state root and the release registry directories when they
+# did not exist before. dshd runs with PATH limited to the prefix's bin and the
 # system directories, and with no environment but the login's basics.
 #
 # launchctl: the kit uses print and list, and bootout of its own labels in
@@ -74,6 +78,7 @@ own_dsh_home=0
 captures=
 capture_domain=0
 timeout=60
+permission_mode=workspace-write
 hold_for=
 T=
 kit=
@@ -83,6 +88,9 @@ invocation=
 mainpid=
 state_root_existed=1
 releases_existed=1
+registry_existed=1
+config_dshd_existed=1
+config_existed=1
 agents_existed=1
 gui=0
 failures=0
@@ -316,6 +324,9 @@ invocation=$invocation
 mainpid=$mainpid
 state_root_existed=$state_root_existed
 releases_existed=$releases_existed
+registry_existed=$registry_existed
+config_dshd_existed=$config_dshd_existed
+config_existed=$config_existed
 agents_existed=$agents_existed
 own_dsh_home=$own_dsh_home
 extra_path=$extra_path
@@ -340,6 +351,9 @@ load_state() {
 		mainpid) mainpid=$value ;;
 		state_root_existed) state_root_existed=$value ;;
 		releases_existed) releases_existed=$value ;;
+		registry_existed) registry_existed=$value ;;
+		config_dshd_existed) config_dshd_existed=$value ;;
+		config_existed) config_existed=$value ;;
 		agents_existed) agents_existed=$value ;;
 		own_dsh_home) own_dsh_home=$value ;;
 		extra_path) extra_path=$value ;;
@@ -364,7 +378,7 @@ add_name() {
 # prefix, and per process running from it.
 leftovers() {
 	local name
-	existing "$state_root/$prefix"-* "$agents/dshd.$prefix"-*.plist "$state_root/.releases/"*"-dshd-release-$prefix"
+	existing "$state_root/$prefix"-* "$agents/dshd.$prefix"-*.plist "$state_root/.releases/"*"-dshd-release-$prefix" "$registry/$prefix"
 	launchctl list 2>/dev/null | awk -v p="dshd.$prefix-" 'index($3, p) == 1 { print "launchd job " $3 }'
 	for name in $names; do
 		if job_loaded "$name"; then
@@ -427,6 +441,9 @@ preflight() {
 	record 0 PASS "nothing of prefix $prefix is left from before"
 	[ -d "$state_root" ] || state_root_existed=0
 	[ -d "$state_root/.releases" ] || releases_existed=0
+	[ -d "$registry" ] || registry_existed=0
+	[ -d "$home/.config/dshd" ] || config_dshd_existed=0
+	[ -d "$home/.config" ] || config_existed=0
 	[ -d "$agents" ] || agents_existed=0
 }
 
@@ -532,14 +549,15 @@ step_binaries() {
 }
 
 step_release() {
-	local entries count entry path writable=
-	if ! call_dshd "$timeout" release add "$prefix" --dsh "$T/bin/dsh"; then
+	local entries count entry path stated writable=
+	record 2 INFO "the release's permission mode" "$permission_mode"
+	if ! call_dshd "$timeout" release add "$prefix" --dsh "$T/bin/dsh" --permission-mode "$permission_mode"; then
 		record 2 FAIL "dshd release add $prefix --dsh \$T/bin/dsh" "$(last_error)"
 		return 1
 	fi
 	release_added=1
 	save_state
-	record 2 PASS "dshd release add $prefix --dsh \$T/bin/dsh"
+	record 2 PASS "dshd release add $prefix --dsh \$T/bin/dsh" "$(json_get "$kit/out" outcome)"
 	entries=$(existing "$state_root/.releases/"*"-dshd-release-$prefix")
 	count=$(printf '%s' "$entries" | grep -c .)
 	if [ "$count" != 1 ]; then
@@ -548,7 +566,7 @@ step_release() {
 	fi
 	entry=$entries
 	record 2 PASS "one entry under ~/.local/state/dshd/.releases" "$(basename "$entry")"
-	for path in "$entry" "$entry/bin" "$entry/bin/dshd-run" "$entry/release.json"; do
+	for path in "$entry" "$entry/bin" "$entry/bin/dshd-run" "$entry/share/dshd" "$entry/share/dshd/release.json"; do
 		if [ ! -e "$path" ]; then
 			writable="$writable ${path#"$entry"/}:missing"
 		elif [ -w "$path" ]; then
@@ -560,6 +578,13 @@ step_release() {
 		record 2 PASS "the entry's bin/dsh is the given DSH, not a copy"
 	else
 		record 2 FAIL "the entry's bin/dsh is the given DSH, not a copy" "$(canonical "$entry/bin/dsh")"
+	fi
+	stated=$(json_get "$entry/share/dshd/release.json" environment.DSH_PERMISSION_MODE)
+	check 2 "release.json states the permission mode" "$stated" "$([ "$stated" = "$permission_mode" ] && echo 0)"
+	if [ "$(canonical "$registry/$prefix")" = "$(canonical "$entry")" ]; then
+		record 2 PASS "the name ~/.config/dshd/releases/$prefix points at the entry"
+	else
+		record 2 FAIL "the name ~/.config/dshd/releases/$prefix points at the entry" "$(canonical "$registry/$prefix" 2>/dev/null)"
 	fi
 }
 
@@ -824,6 +849,10 @@ sweep() {
 		printf '%s\n' "${item#"$home"/}"
 		remove_tree "$item"
 	done
+	if [ -L "$registry/$prefix" ]; then
+		printf '%s\n' "${registry#"$home"/}/$prefix"
+		rm -f "$registry/$prefix"
+	fi
 }
 
 cleanup() {
@@ -881,8 +910,20 @@ cleanup() {
 		rmdir "$state_root/.releases" 2>/dev/null || record 9 FAIL "the state root's .releases is removed" "not empty: $(entries_of "$state_root/.releases")"
 	fi
 	if [ "$state_root_existed" = 0 ] && [ -d "$state_root" ]; then
+		# The root lock every changing verb takes: dshd's own, not the
+		# prefix's, so it goes with a state root the kit brought into being.
+		[ ! -f "$state_root/lock" ] || [ -L "$state_root/lock" ] || rm -f "$state_root/lock"
 		rmdir "$state_root" 2>/dev/null || record 9 FAIL "the state root is removed" "not empty: $(entries_of "$state_root")"
 		rmdir "$home/.local/state" "$home/.local" 2>/dev/null
+	fi
+	if [ "$registry_existed" = 0 ] && [ -d "$registry" ]; then
+		rmdir "$registry" 2>/dev/null || record 9 FAIL "the release registry is removed" "not empty: $(entries_of "$registry")"
+	fi
+	if [ "$config_dshd_existed" = 0 ] && [ -d "$home/.config/dshd" ]; then
+		rmdir "$home/.config/dshd" 2>/dev/null
+	fi
+	if [ "$config_existed" = 0 ] && [ -d "$home/.config" ]; then
+		rmdir "$home/.config" 2>/dev/null
 	fi
 	if [ "$agents_existed" = 0 ] && [ -d "$agents" ]; then
 		rmdir "$agents" 2>/dev/null
@@ -1049,6 +1090,7 @@ while [ "$#" -gt 0 ]; do
 	--dshd) dshd_in=${2-}; shift ;;
 	--dshd-run) runner_in=${2-}; shift ;;
 	--dsh) dsh_in=${2-}; shift ;;
+	--permission-mode) permission_mode=${2-}; shift ;;
 	--prefix) prefix=${2-}; shift ;;
 	--path) extra_path=${2-}; shift ;;
 	--own-dsh-home) own_dsh_home=1 ;;
@@ -1075,6 +1117,7 @@ if [ -z "$home" ]; then
 	home=${home:-$HOME}
 fi
 state_root=$home/.local/state/dshd
+registry=$home/.config/dshd/releases
 agents=$home/Library/LaunchAgents
 
 case $prefix in
@@ -1083,6 +1126,9 @@ esac
 [ "${#prefix}" -le 8 ] || die "--prefix takes 1 to 8 letters a-z"
 case $timeout in
 '' | *[!0-9]*) die "--timeout takes whole seconds" ;;
+esac
+case $permission_mode in
+'' | *[!a-z0-9-]*) die "--permission-mode takes a DSH permission mode such as workspace-write" ;;
 esac
 
 case $mode in

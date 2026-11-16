@@ -1,0 +1,3 @@
+state/dshd/.releases/0123456789abcdef0123456789abcdef-dshd-release-stable/bin/dsh %RELEASE%/bin/dsh
+state/dshd/.releases/0123456789abcdef0123456789abcdef-dshd-release-stable/bin/dshd-run %RELEASE%/bin/dshd-run
+config/dshd/releases/stable %ROOT%/state/dshd/.releases/0123456789abcdef0123456789abcdef-dshd-release-stable

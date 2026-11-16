@@ -375,6 +375,35 @@ fn manager_paths_take_absolute_values_only() {
     );
 }
 
+// catches: a relative or missing configuration root taken for the user release registry, or HOME
+// preferred over an absolute XDG_CONFIG_HOME
+#[test]
+fn config_root_is_xdg_config_home_else_home_config() {
+    let config = |text: &str| ManagerPaths::from_environment(&parse_environment(text)).config_dir;
+    assert_eq!(
+        config("XDG_CONFIG_HOME=/c\nHOME=/var/empty/user\n"),
+        Some(PathBuf::from("/c"))
+    );
+    assert_eq!(
+        config("XDG_CONFIG_HOME=relative\nHOME=/var/empty/user\n"),
+        Some(PathBuf::from("/var/empty/user/.config"))
+    );
+    assert_eq!(config("HOME=relative\n"), None);
+    let systemctl = Systemctl::new(Tool::at("systemctl", "/nonexistent/dshd-no-such-systemctl"));
+    assert!(
+        systemctl
+            .paths
+            .set(ManagerPaths::from_environment(&parse_environment(
+                "XDG_RUNTIME_DIR=/r\n"
+            )))
+            .is_ok()
+    );
+    assert_eq!(
+        systemctl.config_root().unwrap_err().kind(),
+        "systemd-unavailable"
+    );
+}
+
 // catches: an enabled instance inferred from a client config path rather than manager dependencies
 #[test]
 fn wanted_by_is_the_autostart_authority() {

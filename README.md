@@ -246,6 +246,10 @@ reference for each verb.
 | `enable NAME` | | `enabled`, `already-enabled` | Adds the unit to `dshd.target`, which the user manager starts at its first login, or at boot with linger. Starts nothing. Refused for headless instances. |
 | `disable NAME` | | `disabled`, `already-disabled` | Removes the unit from `dshd.target`. Stops nothing. |
 | `rm NAME` | `--invocation ID` | `removed` | Refused while running. Removes the instance directory and its release roots. The profile and DSH's sessions are untouched. With `--invocation ID`, only when the last run was that invocation: any other is refused with `not-running`. |
+| `release add NAME` | `--dsh PATH`, `--permission-mode MODE`, `--env NAME=VALUE`..., `--unset NAME`... | `added`, `unchanged` | Writes a read-only entry of the directory store from the DSH at `PATH`, the runner installed with this `dshd` and the release metadata, or reuses the identical one, and points the user registry name `NAME` at it. The permission mode is required; there is no default. See [Releases without Nix](#releases-without-nix). |
+| `release ls` | | | Every entry of the directory store with the names and instances that hold it, and every user registry name. |
+| `release rm NAME` | | `removed` | Removes the user registry name `NAME`. Its entry stays until `release prune`. |
+| `release prune` | | `pruned`, `unchanged` | Removes every entry that no user registry name and no instance's `current` or `booted` link holds. Nothing prunes on its own. |
 | `help [VERB]` | | | The general page, or the page of one verb. |
 | `--skill` | | | Prints the guide for agents: which verb for which need, the JSON shapes and the traps. |
 | `--version` | | | Prints `dshd 0.1.0`. |
@@ -406,6 +410,45 @@ for the alias selected by `defaultRelease`, or by the only named release;
 name the configured release `stable`, for example. `dshd rm` deletes the links, so the next
 collection frees a release no other instance holds.
 
+### Releases without Nix
+
+On a machine without Nix, such as a Mac with dshd installed from a
+package, the verb `release add` makes the release that `/etc/dshd/releases`
+would otherwise name:
+
+```
+$ dshd release add stable --dsh /usr/local/bin/dsh --permission-mode workspace-write
+$ dshd run --release stable -- web
+$ dshd release ls
+```
+
+- **The entry.** `release add` writes
+  `%S/dshd/.releases/<hash>-dshd-release-NAME` (`~/.local/state/dshd/.releases`):
+  `bin/dsh`, a link to the DSH at `PATH` as it resolves now; `bin/dshd-run`,
+  a copy of the runner installed with this `dshd` (beside it, or in
+  `../libexec/dshd`); and `share/dshd/release.json`. It is written aside,
+  made read-only and renamed into place, and never changes after that.
+  The hash covers the DSH path, the runner's bytes and the metadata, so
+  identical inputs reuse the entry and any change makes a new one. dshd
+  never copies, fetches or changes the DSH itself.
+- **The name.** `NAME` becomes a link in the user registry,
+  `$XDG_CONFIG_HOME/dshd/releases` (`~/.config/dshd/releases`). dshd reads it
+  only for a name `/etc/dshd/releases` does not hold, so a NixOS host that
+  never runs `release add` resolves as before. `--release` also takes an
+  entry's path.
+- **The permission mode.** `--permission-mode MODE` is required and becomes
+  the release's `DSH_PERMISSION_MODE`; such a release has no default.
+  `--env NAME=VALUE` adds other variables and `--unset NAME` strips one,
+  with the refusals of `lib.mkRelease`.
+- **Roots and update.** An instance's `current` and `booted` links point at
+  the entry directly; no `nix-store` runs. Pointing a name at a new entry
+  leaves every instance on its own until `dshd update NAME`, which prints
+  the two labels in place of a closure difference.
+- **Removal.** `dshd release rm NAME` removes the name only.
+  `dshd release prune` removes every entry that no user registry name and
+  no instance's `current` or `booted` link holds. Nothing prunes, adds or updates a
+  release on its own.
+
 ## Environment and permission
 
 At creation dshd captures the environment of the `dshd run` command,
@@ -439,7 +482,9 @@ unless it says so:
 6. `INVOCATION_ID` and `JOURNAL_STREAM` from the runner.
 
 `DSH_PERMISSION_MODE=danger-full-access` is the default through every
-release, so a retained instance never waits for an approval nobody sees.
+release `lib.mkRelease` builds, so a retained instance never waits for an
+approval nobody sees. A release made with `release add` has no such
+default: it states its mode with `--permission-mode`.
 Your own value, a profile patch and a home patch still win; set another
 mode in the release's `environment`, for example `"workspace-write"`, to
 change the default. A web instance where people open sessions is
@@ -679,6 +724,10 @@ line, or `{"error":{"kind":KIND,"message":TEXT,"hint":COMMAND|null}}`.
 - `ls` prints one object:
   `{"instances":[{"name","state","transport","profile","profilePatches","release","releaseState","enabled","since","remedy","labels"}],"linger":BOOL,"warnings":[...]}`,
   where `profilePatches` is `get`'s `profile.patches`, so a supervisor can match its instances by label with one call.
+- `release add` and `release rm` print
+  `{"outcome","name","entry","previous","created","warnings"}`, `release ls`
+  `{"store","registry","entries":[{"path","label","names","current","booted"}],"names":[{"name","target"}],"warnings"}`,
+  and `release prune` `{"outcome","pruned","kept","warnings"}`.
 - `read --json` prints `{"name","invocationId","complete","streams","lines"}`;
   `attach --json` on a web instance prints `{"origin","port","urlFile"}`,
   and `url` with `--print-url`.
@@ -692,6 +741,7 @@ describes every object.
 | `lastRun.ending` | `stopped` (by dshd), `stopped-without-intent` (by anything else), `exited` (`dsh` ended by itself, successfully), `failed`, `interrupted`, or `null` while the run is in progress |
 | `outcome` | `created`, `started`, `already-running`, `stopped`, `already-stopped`, `restarted`, `updated`, `unchanged`, `enabled`, `already-enabled`, `disabled`, `already-disabled`, `removed`, `labelled`, `ended`, `still-running` |
 | `release.state` | `current`, `stale`, `outdated`, `missing` |
+| `outcome` of `dshd release` | `added`, `unchanged`, `removed`, `pruned` |
 | `transport` | `web`, `acp`, `none` |
 
 | Exit | Meaning | Kinds |
@@ -718,8 +768,9 @@ The contract only grows: adding an optional field is the one compatible
 change. Removing or renaming a field, changing its type or meaning, adding
 a value to a closed vocabulary or renumbering an exit code is a breaking
 change, made only with a **Breaking:** entry in the CHANGELOG. The unit
-and target names, the paths under `%S/dshd`, `%t/dshd` and
-`/etc/dshd/releases` and the journal markers are frozen the same way. Records on disk carry no version
+and target names, the paths under `%S/dshd`, `%t/dshd`,
+`/etc/dshd/releases` and `$XDG_CONFIG_HOME/dshd/releases` and the journal
+markers are frozen the same way. Records on disk carry no version
 number and are closed: a command or runner that acts on a record refuses
 one with a field it does not know rather than guess.
 

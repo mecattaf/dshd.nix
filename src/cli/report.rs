@@ -247,6 +247,100 @@ pub struct ListReport {
     pub warnings: Vec<String>,
 }
 
+/// The `outcome` vocabulary of `dshd release`, closed, apart from the
+/// instance verbs' own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReleaseOutcome {
+    /// `release add` pointed the name at an entry it did not point at.
+    Added,
+    /// `release add` found the name on that entry already, or
+    /// `release prune` found nothing to remove.
+    Unchanged,
+    /// `release rm` removed the name.
+    Removed,
+    /// `release prune` removed entries.
+    Pruned,
+}
+
+/// `release add` and `release rm`: one user registry name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseChange {
+    /// What happened to the name.
+    pub outcome: ReleaseOutcome,
+    /// The release name.
+    pub name: String,
+    /// The entry the name points at now; `null` once removed.
+    pub entry: Option<String>,
+    /// What the name pointed at before; `null` for a new name, or one
+    /// that dangled.
+    pub previous: Option<String>,
+    /// Whether this command wrote the entry; `false` when identical
+    /// inputs had written it before.
+    pub created: bool,
+    /// Things to know: instances that record the name, a system registry
+    /// name that wins over it.
+    pub warnings: Vec<String>,
+}
+
+/// `release ls`: the directory store and the user registry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseList {
+    /// The directory store, `%S/dshd/.releases`.
+    pub store: String,
+    /// The user registry, `<config root>/dshd/releases`; `null` when the
+    /// manager names no configuration root.
+    pub registry: Option<String>,
+    /// The entries of the store, by path.
+    pub entries: Vec<ReleaseEntry>,
+    /// The names of the user registry, by name.
+    pub names: Vec<ReleaseName>,
+    /// Things to know.
+    pub warnings: Vec<String>,
+}
+
+/// One entry of the directory store and what holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseEntry {
+    /// The entry.
+    pub path: String,
+    /// Its label, as `ls` shows a release.
+    pub label: String,
+    /// The user registry names that point at it.
+    pub names: Vec<String>,
+    /// The instances whose `current` link points at it.
+    pub current: Vec<String>,
+    /// The instances whose `booted` link points at it.
+    pub booted: Vec<String>,
+}
+
+/// One name of the user registry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseName {
+    /// The name.
+    pub name: String,
+    /// What it points at; `null` when it dangles.
+    pub target: Option<String>,
+}
+
+/// `release prune`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleasePrune {
+    /// `pruned`, or `unchanged` when nothing was removed.
+    pub outcome: ReleaseOutcome,
+    /// The entries removed.
+    pub pruned: Vec<String>,
+    /// The entries kept, since a name or an instance holds them.
+    pub kept: Vec<String>,
+    /// Things to know.
+    pub warnings: Vec<String>,
+}
+
 /// The `outcome` vocabulary of the mutating verbs, closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]

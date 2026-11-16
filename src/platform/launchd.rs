@@ -304,6 +304,10 @@ impl ServiceManager for LaunchdManager {
         &self.state_root
     }
 
+    fn config_root(&self) -> Result<PathBuf, Error> {
+        Ok(self.home.join(".config"))
+    }
+
     fn runtime_dir(&self, name: &InstanceName) -> RuntimeDir {
         RuntimeDir::new(self.instance_dir(name).path().join(RUN_DIR))
     }

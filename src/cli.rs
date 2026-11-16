@@ -11,14 +11,16 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::Error;
 use crate::instance;
-use crate::name::{InstanceName, StateRoot};
+use crate::name::{InstanceName, RELEASES_DIR, StateRoot};
 use crate::out;
 use crate::platform::ServiceManager;
 use crate::record::Transport;
+use crate::release::Registries;
+use crate::release::user::ReleaseEnvironment;
 use crate::tool::Tool;
 
 mod attach;
@@ -31,6 +33,7 @@ mod lifecycle;
 mod ls;
 mod parse;
 mod read;
+mod release;
 mod render;
 /// The JSON objects the CLI prints, which `tests/contract/dshd.schema.json` describes.
 pub mod report;
@@ -192,6 +195,31 @@ pub struct LabelArgs {
     pub labels: BTreeMap<String, String>,
 }
 
+/// `dshd release add NAME --dsh PATH --permission-mode MODE
+/// [--env NAME=VALUE]... [--unset NAME]...`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseAddArgs {
+    /// The user registry name.
+    pub name: InstanceName,
+    /// `--dsh PATH`: the DSH executable, linked, never copied.
+    pub dsh: PathBuf,
+    /// `--permission-mode`, `--env` and `--unset`.
+    pub environment: ReleaseEnvironment,
+}
+
+/// `dshd release VERB`: the releases a user adds without Nix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseArgs {
+    /// `release add NAME --dsh PATH --permission-mode MODE ...`.
+    Add(ReleaseAddArgs),
+    /// `release ls`.
+    Ls,
+    /// `release rm NAME`: the user registry name only.
+    Rm(InstanceName),
+    /// `release prune`.
+    Prune,
+}
+
 /// One parsed verb.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verb {
@@ -223,6 +251,8 @@ pub enum Verb {
     Disable(NameArgs),
     /// `rm [--invocation ID] NAME`.
     Rm(RmArgs),
+    /// `release add|ls|rm|prune`.
+    Release(ReleaseArgs),
     /// `help [VERB]`, and `--help` anywhere.
     Help(Option<String>),
     /// `--skill`.
@@ -288,6 +318,17 @@ impl Context {
     /// `SystemdUnavailable`.
     pub fn from_env(asked: Asked, json: bool) -> Result<Self, Error> {
         context::from_env(asked, json)
+    }
+
+    /// Where release names resolve: `/etc/dshd/releases`, then the user
+    /// registry under the manager's configuration root, when it names one.
+    pub fn registries(&self) -> Registries {
+        let config_root = self.manager.config_root().ok();
+        Registries::new(
+            Path::new(RELEASES_DIR),
+            config_root.as_deref(),
+            &self.state_root,
+        )
     }
 }
 
@@ -389,6 +430,7 @@ fn run(ctx: &Context, verb: Verb) -> Result<u8, Error> {
         Verb::Attach(args) => done(attach::run(ctx, &args)),
         Verb::Label(args) => done(label::run(ctx, &args)),
         Verb::Rm(args) => done(rm::run(ctx, &args)),
+        Verb::Release(args) => done(release::run(ctx, &args)),
         Verb::Help(_) | Verb::Skill | Verb::Version => Ok(0),
     }
 }

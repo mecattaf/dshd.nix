@@ -53,6 +53,8 @@ pub struct Systemctl {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ManagerPaths {
     runtime_dir: Option<PathBuf>,
+    /// `$XDG_CONFIG_HOME`, else `$HOME/.config`: systemd's `%E`.
+    config_dir: Option<PathBuf>,
 }
 
 /// Properties of one unit from `systemctl show`.
@@ -247,6 +249,17 @@ impl Systemctl {
         self.paths()?.runtime_dir.clone().ok_or_else(|| {
             Error::SystemdUnavailable(
                 "the user manager's environment has no absolute XDG_RUNTIME_DIR".to_owned(),
+            )
+        })
+    }
+
+    /// The manager's configuration root, systemd's `%E`:
+    /// `XDG_CONFIG_HOME`, else `HOME/.config`, from the same one
+    /// `show-environment` the runtime root comes from.
+    pub fn config_root(&self) -> Result<PathBuf, Error> {
+        self.paths()?.config_dir.clone().ok_or_else(|| {
+            Error::SystemdUnavailable(
+                "the user manager's environment has no absolute XDG_CONFIG_HOME or HOME".to_owned(),
             )
         })
     }
@@ -458,6 +471,8 @@ impl ManagerPaths {
         };
         Self {
             runtime_dir: absolute("XDG_RUNTIME_DIR"),
+            config_dir: absolute("XDG_CONFIG_HOME")
+                .or_else(|| absolute("HOME").map(|home| home.join(".config"))),
         }
     }
 }

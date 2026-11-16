@@ -20,6 +20,12 @@ registry=$HOME/.config/dshd/releases
 uid=$(id -u)
 here=$(cd "$(dirname "$0")" && pwd)
 
+# The root lock every changing verb of dshd takes, and leaves in place.
+root_lock() {
+	mkdir -p "$state"
+	: >>"$state/lock"
+}
+
 fail() {
 	printf '{"error":{"kind":"%s","message":"%s","hint":null}}\n' "$2" "$3" >&2
 	exit "$1"
@@ -153,6 +159,7 @@ get_json() {
 
 verb_run() {
 	local name='' release='' cwd=$PWD dir entry
+	root_lock
 	while [ "$#" -gt 0 ]; do
 		case $1 in
 		--name) name=$2; shift ;;
@@ -212,24 +219,37 @@ verb_rm() {
 }
 
 release_add() {
-	local label=$1 dsh=$3 hash entry
+	local label=$1 dsh='' mode='' hash entry
+	shift
+	while [ "$#" -gt 0 ]; do
+		case $1 in
+		--dsh) dsh=$2; shift ;;
+		--permission-mode) mode=$2; shift ;;
+		--json | --text) ;;
+		*) fail 2 invalid-argument "release add does not take $1" ;;
+		esac
+		shift
+	done
+	[ -n "$dsh" ] || fail 2 invalid-argument "release add needs --dsh PATH"
+	[ -n "$mode" ] || fail 2 invalid-argument "release add needs --permission-mode MODE"
+	root_lock
 	dsh=$(cd -P "$(dirname "$dsh")" && pwd)/$(basename "$dsh")
 	while [ -L "$dsh" ]; do
 		dsh=$(readlink -f "$dsh")
 	done
-	hash=$(printf '%s\n%s\n' "$label" "$dsh" | sha256sum | cut -c 1-32)
+	hash=$(printf '%s\n%s\n%s\n' "$label" "$dsh" "$mode" | sha256sum | cut -c 1-32)
 	entry=$state/.releases/$hash-dshd-release-$label
 	if [ ! -d "$entry" ]; then
-		mkdir -p "$entry/bin"
+		mkdir -p "$entry/bin" "$entry/share/dshd"
 		ln -s "$dsh" "$entry/bin/dsh"
 		cp "$here/../libexec/dshd/dshd-run" "$entry/bin/dshd-run"
-		printf '{"environment":{},"unsetEnvironment":[]}\n' >"$entry/release.json"
-		chmod 0555 "$entry/bin/dshd-run" "$entry/bin" "$entry"
-		chmod 0444 "$entry/release.json"
+		printf '{"environment":{"DSH_PERMISSION_MODE":"%s"},"unsetEnvironment":[]}\n' "$mode" >"$entry/share/dshd/release.json"
+		chmod 0444 "$entry/share/dshd/release.json"
+		chmod 0555 "$entry/bin/dshd-run" "$entry/bin" "$entry/share/dshd" "$entry/share" "$entry"
 	fi
 	mkdir -p "$registry"
 	ln -sfn "$entry" "$registry/$label"
-	outcome created "$label"
+	printf '{"outcome":"added","name":"%s","entry":"%s","previous":null,"created":true,"warnings":[]}\n' "$label" "$entry"
 }
 
 release_prune() {
@@ -248,25 +268,29 @@ release_prune() {
 			rm -rf "$entry"
 		fi
 	done
-	printf '{"pruned":true}\n'
+	printf '{"outcome":"pruned","pruned":[],"kept":[],"warnings":[]}\n'
 }
 
 release_ls() {
 	local link first=1
-	printf '{"releases":['
+	printf '{"store":"%s","registry":"%s","entries":[],"names":[' "$state/.releases" "$registry"
 	for link in "$registry"/*; do
 		[ -L "$link" ] || continue
 		[ "$first" = 1 ] || printf ','
 		first=0
-		printf '{"name":"%s"}' "$(basename "$link")"
+		printf '{"name":"%s","target":null}' "$(basename "$link")"
 	done
-	printf ']}\n'
+	printf '],"warnings":[]}\n'
 }
 
 verb_release() {
 	case ${1-} in
 	add) shift; release_add "$@" ;;
-	rm) rm -f "$registry/$2"; outcome removed "$2" ;;
+	rm)
+		[ -L "$registry/$2" ] || fail 3 release-not-found "no release named $2"
+		rm -f "$registry/$2"
+		printf '{"outcome":"removed","name":"%s","entry":null,"previous":null,"created":false,"warnings":[]}\n' "$2"
+		;;
 	prune) release_prune ;;
 	ls) release_ls ;;
 	*) fail 2 invalid-argument "unknown release verb ${1-}" ;;

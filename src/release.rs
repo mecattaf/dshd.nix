@@ -10,6 +10,7 @@ use crate::error::Error;
 use crate::fsx;
 use crate::name::{
     DEFAULT_RELEASE, InstanceDir, InstanceName, RELEASE_DSH, RELEASE_FILE, RELEASE_RUNNER,
+    StateRoot, USER_RELEASES_DIR,
 };
 use crate::record::ReleaseFile;
 use crate::tool::Tool;
@@ -22,6 +23,8 @@ const STORE_HASH_LEN: usize = 32;
 const RELEASE_NAME_PREFIX: &str = "dshd-release-";
 /// Any of the execute bits.
 const EXECUTE_BITS: u32 = 0o111;
+/// Why a release path outside the Nix store is refused.
+const NOT_A_STORE_PATH: &str = "it is not a store path (a directory directly under /nix/store)";
 
 /// A resolved, validated release.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +64,53 @@ impl ReleaseState {
     }
 }
 
+/// Where release names resolve, and where the releases that need no Nix
+/// live. A name resolves through the system registry when that holds it at
+/// all, and through the user registry only otherwise, so a NixOS or
+/// nix-darwin host, which never writes the user registry, resolves as it
+/// always has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Registries {
+    /// `/etc/dshd/releases`, written by the NixOS module.
+    pub system: PathBuf,
+    /// `<config root>/dshd/releases`, written by `dshd release add`; `None`
+    /// when the manager names no configuration root.
+    pub user: Option<PathBuf>,
+    /// The directory store, `%S/dshd/.releases`.
+    pub store: PathBuf,
+}
+
+impl Registries {
+    /// The registries of a user: `system` as given, the user registry under
+    /// `config_root`, the directory store under the instances directory of
+    /// `state_root`.
+    pub fn new(system: &Path, config_root: Option<&Path>, state_root: &StateRoot) -> Self {
+        Self {
+            system: system.to_path_buf(),
+            user: config_root.map(|root| root.join(USER_RELEASES_DIR)),
+            store: directory_store(state_root),
+        }
+    }
+
+    /// Only the system registry, as before the directory store: no user
+    /// registry, and a store no path can be an entry of.
+    pub fn system_only(system: &Path) -> Self {
+        Self {
+            system: system.to_path_buf(),
+            user: None,
+            store: PathBuf::new(),
+        }
+    }
+}
+
+/// The directory store of a user: `.releases` in the instances directory
+/// (`%S/dshd/.releases`), a dot directory the instance listing skips.
+/// `store::store_root` joins its argument's own path, so it is handed the
+/// instances directory.
+pub fn directory_store(state_root: &StateRoot) -> PathBuf {
+    store::store_root(&StateRoot::new(state_root.instances_dir()))
+}
+
 /// Resolves the registry link `<RELEASES_DIR>/<name>` to its canonical
 /// store path. `Ok(None)` when absent, dangling, or when `name` cannot be a
 /// registry name. A `name` that is an absolute path (a release pinned by
@@ -75,17 +125,79 @@ pub fn registry_target(releases_dir: &Path, name: &str) -> Result<Option<PathBuf
     fsx::canonical_path(&releases_dir.join(name))
 }
 
+/// [`registry_target`] through both registries: the system registry's link
+/// when it holds `name`, a dangling link included, else the user
+/// registry's.
+pub fn registry_target_in(registries: &Registries, name: &str) -> Result<Option<PathBuf>, Error> {
+    match registry_link(registries, name)? {
+        Some(link) => fsx::canonical_path(&link),
+        None => registry_target(&registries.system, name),
+    }
+}
+
+/// The user registry link `name` resolves through: `None` for a path, a
+/// name outside the grammar, a name the system registry holds, or no user
+/// registry.
+fn registry_link(registries: &Registries, name: &str) -> Result<Option<PathBuf>, Error> {
+    if name.starts_with('/') || InstanceName::parse(name).is_err() {
+        return Ok(None);
+    }
+    if fsx::kind(&registries.system.join(name))?.is_some() {
+        return Ok(None);
+    }
+    Ok(registries.user.as_ref().map(|user| user.join(name)))
+}
+
+/// [`resolve`] through both registries, accepting an entry of the
+/// directory store by its path as well as a Nix store path.
+pub fn resolve_in(registries: &Registries, name: Option<&str>) -> Result<Release, Error> {
+    let name = name.unwrap_or(DEFAULT_RELEASE);
+    if name.starts_with('/') {
+        return resolve_path(registries, name);
+    }
+    let Some(path) = registry_target_in(registries, name)? else {
+        return Err(Error::ReleaseNotFound(name.to_owned()));
+    };
+    let file = validate(&path)?;
+    Ok(Release {
+        name: name.to_owned(),
+        path,
+        file,
+    })
+}
+
+/// Whether `path`, canonical, is an entry of the directory store at
+/// `store`.
+pub fn is_directory_entry(store: &Path, path: &Path) -> bool {
+    if store.as_os_str().is_empty() {
+        return false;
+    }
+    match fsx::canonical_path(store) {
+        Ok(Some(root)) => store::is_entry(&root, path),
+        _ => false,
+    }
+}
+
+/// Whether `path` lies in the Nix store.
+pub fn in_nix_store(path: &Path) -> bool {
+    store_path_of(path).is_some()
+}
+
+/// Whether `path` is a release of a directory store, by where it lives:
+/// outside the Nix store, named `<32 hex>-dshd-release-<label>` in a
+/// directory named `.releases`. Its roots are plain links, and it has no
+/// closure to compare.
+pub fn in_directory_store(path: &Path) -> bool {
+    !in_nix_store(path) && entry_shaped(path)
+}
+
 /// Resolves `name` (or `default`) through the registry and validates the
 /// package: `bin/dsh` and `bin/dshd-run` executable, `release.json` parsed
 /// with no unrecognized keys. A `name` that is an absolute path under
 /// `/nix/store` is used directly, with the path as the release name, so a
 /// release needs no registry entry to be tried.
 pub fn resolve(releases_dir: &Path, name: Option<&str>) -> Result<Release, Error> {
-    match name {
-        None => resolve_registered(releases_dir, DEFAULT_RELEASE),
-        Some(path) if path.starts_with('/') => resolve_store_path(path),
-        Some(name) => resolve_registered(releases_dir, name),
-    }
+    resolve_in(&Registries::system_only(releases_dir), name)
 }
 
 /// Validates a release package at `path` and loads its metadata.
@@ -118,8 +230,13 @@ pub fn validate(path: &Path) -> Result<ReleaseFile, Error> {
 }
 
 /// `nix-store --option substitute false --realise PATH --add-root LINK`:
-/// an indirect root that survives GC.
+/// an indirect root that survives GC. An entry of a directory store is
+/// not Nix's to collect: `LINK` becomes a plain link to it, and no
+/// `nix-store` runs.
 pub fn add_root(nix_store: &Tool, store_path: &Path, link: &Path) -> Result<(), Error> {
+    if in_directory_store(store_path) {
+        return fsx::symlink_replace(store_path, link);
+    }
     nix_store.run([
         OsStr::new("--option"),
         OsStr::new("substitute"),
@@ -224,15 +341,56 @@ fn store_path_of(path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn resolve_registered(releases_dir: &Path, name: &str) -> Result<Release, Error> {
-    let Some(path) = registry_target(releases_dir, name)? else {
-        return Err(Error::ReleaseNotFound(name.to_owned()));
-    };
-    let file = validate(&path)?;
-    Ok(Release {
-        name: name.to_owned(),
-        path,
-        file,
+/// Whether `path` has the shape of a directory store entry: named
+/// `<32 hex>-dshd-release-<label>` in a directory named `.releases`.
+fn entry_shaped(path: &Path) -> bool {
+    let in_store = path
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == store::STORE_DIR);
+    let named = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .and_then(|name| name.split_once(store::ENTRY_INFIX))
+        .is_some_and(|(hash, label)| {
+            hash.len() == STORE_HASH_LEN
+                && hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                && !label.is_empty()
+        });
+    in_store && named
+}
+
+/// A release given by its path: a Nix store path, or an entry of the
+/// directory store.
+fn resolve_path(registries: &Registries, given: &str) -> Result<Release, Error> {
+    if let Some(path) = fsx::canonical_path(Path::new(given))?
+        && !in_nix_store(&path)
+        && is_directory_entry(&registries.store, &path)
+    {
+        let Some(name) = path.to_str().map(str::to_owned) else {
+            return Err(Error::ReleaseInvalid {
+                release: given.to_owned(),
+                reason: "its path is not UTF-8".to_owned(),
+            });
+        };
+        let file = validate(&path)?;
+        return Ok(Release { name, path, file });
+    }
+    resolve_store_path(given).map_err(|error| match error {
+        Error::ReleaseInvalid { release, reason }
+            if reason == NOT_A_STORE_PATH && registries.store.is_dir() =>
+        {
+            Error::ReleaseInvalid {
+                release,
+                reason: format!(
+                    "{reason}, nor an entry of the release store {}",
+                    registries.store.display()
+                ),
+            }
+        }
+        other => other,
     })
 }
 
@@ -245,9 +403,7 @@ fn resolve_store_path(given: &str) -> Result<Release, Error> {
         return Err(invalid("it does not exist"));
     };
     if store_path_of(&path).as_deref() != Some(path.as_path()) {
-        return Err(invalid(
-            "it is not a store path (a directory directly under /nix/store)",
-        ));
+        return Err(invalid(NOT_A_STORE_PATH));
     }
     let Some(name) = path.to_str().map(str::to_owned) else {
         return Err(invalid("its path is not UTF-8"));
@@ -264,6 +420,7 @@ fn is_store_hash(text: &str) -> bool {
 }
 
 pub mod store;
+pub mod user;
 
 #[cfg(test)]
 #[path = "release/unit_tests.rs"]

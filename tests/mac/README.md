@@ -49,7 +49,9 @@ bash acceptance.sh run --dshd DIR/bin/dshd --dsh PATH/TO/dsh
 needed). It is used where it is and never copied or changed. By default
 DSH runs with `DSH_HOME` inside the temporary prefix; `--own-dsh-home` lets
 it use its own. `--path DIR` adds a directory DSH needs, such as its
-interpreter's, after the system directories.
+interpreter's, after the system directories. `--permission-mode MODE` is
+the permission mode the kit's release states, since `release add` requires
+one; it defaults to `workspace-write`, and the run records it.
 
 Two checks need a person between two halves:
 
@@ -83,7 +85,7 @@ which name every job of the user: read them before they go anywhere.
 |---|---|
 | 0 | macOS on arm64; the GUI domain; nothing of the prefix left from before |
 | 1 | both binaries: arm64 Mach-O, a valid signature, only system libraries, no Nix store path; `dshd --version`; no `nix` on dshd's `PATH`; DSH not from Nix |
-| 2 | `release add`: one read-only entry under `~/.local/state/dshd/.releases`, its `bin/dsh` the given DSH |
+| 2 | `release add --permission-mode MODE`: one read-only entry under `~/.local/state/dshd/.releases`, its `bin/dsh` the given DSH, its `share/dshd/release.json` stating the mode; the name `~/.config/dshd/releases/zzt` points at it |
 | 3 | `run -- web`: state `running`, unit `gui/UID/dshd.zzt-web`, a web URL, launchd holds the job, the plist has no schedule, `KeepAlive` or environment key, not enabled |
 | 4 | the runner's parent is launchd and it has no terminal; with a hold, the same invocation after the session closed |
 | 5 | `stop`: launchd no longer holds the job, `lastRun.ending` `stopped`; `start`: a new invocation |

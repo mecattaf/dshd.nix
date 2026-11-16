@@ -1,0 +1,6 @@
+release
+add
+stable
+--dsh
+%RELEASE%/bin/dsh
+--json

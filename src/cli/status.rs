@@ -172,7 +172,7 @@ pub(super) fn gather(
         .and_then(|instance| last_run_of(instance, &mut findings));
     let release = instance
         .as_ref()
-        .map(|instance| release_of(instance, &mut findings));
+        .map(|instance| release_of(ctx, instance, &mut findings));
     let record = instance.as_ref().map(|instance| &instance.record);
     let mut state = systemctl::derive_state(Some(facts), record, last_run.as_ref(), boot);
     if findings.unsound && !unit_up(facts) {
@@ -330,7 +330,11 @@ fn last_run_of(instance: &Instance, findings: &mut Findings) -> Option<LastRun> 
 /// The release block. A `current` link that is missing or dangles is a
 /// fault; a registry that cannot be read is a note, since it is not the
 /// instance's own state.
-fn release_of(instance: &Instance, findings: &mut Findings) -> (ReleaseReport, ReleaseState) {
+fn release_of(
+    ctx: &Context,
+    instance: &Instance,
+    findings: &mut Findings,
+) -> (ReleaseReport, ReleaseState) {
     let recorded = &instance.record.release;
     let (current, booted) = match release::links(&instance.dir) {
         Ok((None, booted)) => {
@@ -346,7 +350,7 @@ fn release_of(instance: &Instance, findings: &mut Findings) -> (ReleaseReport, R
             (None, None)
         }
     };
-    let registry = match release::registry_target(Path::new(name::RELEASES_DIR), recorded) {
+    let registry = match release::registry_target_in(&ctx.registries(), recorded) {
         Ok(target) => target,
         Err(error) => {
             findings.note(error.to_string());

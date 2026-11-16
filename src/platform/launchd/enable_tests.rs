@@ -12,7 +12,6 @@ fn copy(bench: &Bench) -> std::path::PathBuf {
 
 // catches: an enable that loads or starts the job, writes a symlink or a group-writable file, or a copy that differs
 #[test]
-#[ignore = "packet D06: launchd enable and disable"]
 fn enable_writes_the_copy_and_calls_no_launchctl() {
     let bench = Bench::new("ld-enable", "web-1");
     let echoes = enable(&bench.manager, &bench.name).unwrap();
@@ -44,7 +43,6 @@ fn enable_writes_the_copy_and_calls_no_launchctl() {
 
 // catches: a stale or edited copy left in place by enable, or reported as current
 #[test]
-#[ignore = "packet D06: launchd enable and disable"]
 fn enable_rewrites_a_copy_that_differs() {
     let bench = Bench::new("ld-enable-differs", "web-1");
     let copy = copy(&bench);
@@ -63,7 +61,6 @@ fn enable_rewrites_a_copy_that_differs() {
 
 // catches: a symlink at the copy's path taken for a current copy
 #[test]
-#[ignore = "packet D06: launchd enable and disable"]
 fn a_symlinked_copy_differs() {
     let bench = Bench::new("ld-enable-link", "web-1");
     enable(&bench.manager, &bench.name).unwrap();
@@ -78,7 +75,6 @@ fn a_symlinked_copy_differs() {
 
 // catches: a disable that unloads or stops the job, leaves the copy, or fails when there is none
 #[test]
-#[ignore = "packet D06: launchd enable and disable"]
 fn disable_removes_the_copy_and_calls_no_launchctl() {
     let bench = Bench::new("ld-disable", "web-1");
     assert_eq!(

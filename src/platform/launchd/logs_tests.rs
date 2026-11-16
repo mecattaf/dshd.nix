@@ -20,7 +20,6 @@ fn owned(lines: &[&str]) -> Vec<String> {
 
 // catches: a run log readable by others, a missing latest link, or a second create clobbering a live run's log
 #[test]
-#[ignore = "packet D09: per-run logs"]
 fn create_makes_a_private_log_and_points_latest_at_it() {
     let scratch = Scratch::new("ld-logs-create");
     let runs = scratch.path().join("runs");
@@ -49,7 +48,6 @@ fn create_makes_a_private_log_and_points_latest_at_it() {
 
 // catches: -n and --head windows that are off by one, reorder lines, or report complete when lines were cut
 #[test]
-#[ignore = "packet D09: per-run logs"]
 fn windows_read_newest_and_oldest() {
     let scratch = Scratch::new("ld-logs-window");
     let path = log_with(&scratch, b"a\nb\nc\nd\ne\n");
@@ -89,7 +87,6 @@ fn windows_read_newest_and_oldest() {
 
 // catches: a half-written last line shown (it changes under the reader), or invalid UTF-8 failing the read
 #[test]
-#[ignore = "packet D09: per-run logs"]
 fn a_partial_last_line_is_left_out_and_bad_bytes_replaced() {
     let scratch = Scratch::new("ld-logs-partial");
     let path = log_with(&scratch, b"one\ntw\xffo\nthr");
@@ -105,7 +102,6 @@ fn a_partial_last_line_is_left_out_and_bad_bytes_replaced() {
 
 // catches: a removed run log read as an error instead of no lines (as for a run journald rotated away)
 #[test]
-#[ignore = "packet D09: per-run logs"]
 fn a_missing_log_is_no_lines() {
     let scratch = Scratch::new("ld-logs-missing");
     let lines = read_window(&scratch.path().join("gone.log"), Window::Newest(5)).unwrap();
@@ -120,7 +116,6 @@ fn a_missing_log_is_no_lines() {
 
 // catches: a newest window over a large file that reads it all forwards (it must read from the end)
 #[test]
-#[ignore = "packet D09: per-run logs"]
 fn newest_reads_a_large_file() {
     let scratch = Scratch::new("ld-logs-large");
     let mut text = String::new();
@@ -134,7 +129,6 @@ fn newest_reads_a_large_file() {
 
 // catches: a start-failed tail empty when the runner never opened a run log, or taken from an older run
 #[test]
-#[ignore = "packet D09: per-run logs"]
 fn failure_tail_prefers_the_newest_run_then_launchd_log() {
     let scratch = Scratch::new("ld-logs-tail");
     let runs = scratch.path().join("runs");

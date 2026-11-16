@@ -78,7 +78,7 @@ fn record_last_run(place: &Place) -> Result<(), Error> {
 
 /// The start half `last-run.json` holds for this invocation, if it does. An
 /// unreadable file is reported and replaced.
-fn start_half(path: &Path, invocation_id: &str) -> Option<LastRun> {
+pub(super) fn start_half(path: &Path, invocation_id: &str) -> Option<LastRun> {
     match fsx::read_json::<LastRun>(path) {
         Ok(start) => {
             start.filter(|start| !invocation_id.is_empty() && start.invocation_id == invocation_id)
@@ -93,7 +93,7 @@ fn start_half(path: &Path, invocation_id: &str) -> Option<LastRun> {
 }
 
 /// Removes one per-run file; one that is already gone is fine.
-fn remove_if_present(path: &Path) -> Result<(), Error> {
+pub(super) fn remove_if_present(path: &Path) -> Result<(), Error> {
     match std::fs::remove_file(path) {
         Err(source) if source.kind() != io::ErrorKind::NotFound => {
             Err(Error::io("remove", path, source))

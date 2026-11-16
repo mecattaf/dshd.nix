@@ -208,6 +208,26 @@ pub(crate) fn nonblocking_child_input(input: &impl AsRawFd) -> io::Result<()> {
     Ok(())
 }
 
+/// Makes `output` the process's stdout and stderr: `dup2` onto descriptors
+/// 1 and 2. The launchd runner's per-run log, which `dsh` and every line
+/// the runner writes then reach, as the journal does on Linux.
+pub fn redirect_output(output: &impl AsRawFd) -> Result<(), Error> {
+    let fd = output.as_raw_fd();
+    for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+        // SAFETY: dup2(2) takes two descriptor numbers and touches no
+        // memory; `output` keeps `fd` open for the call, and replacing 1 and
+        // 2 closes only what they named before, which no Rust value owns.
+        if unsafe { libc::dup2(fd, target) } < 0 {
+            return Err(Error::io(
+                "redirect",
+                format!("descriptor {target}"),
+                io::Error::last_os_error(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// `getuid` then `getpwuid_r`.
 pub fn current_user() -> Result<User, Error> {
     // SAFETY: getuid(2) has no preconditions and cannot fail.

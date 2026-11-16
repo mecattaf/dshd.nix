@@ -1,0 +1,322 @@
+#!/usr/bin/env bash
+# A stand-in for dshd on macOS, for the self-test of tests/mac/acceptance.sh
+# on Linux: the verbs, exit codes and JSON fields the kit reads, over the
+# stand-in launchctl's jobs in ~/.fake-launchd (tests/mac/fake/macos-tools.sh).
+# It is not a model of dshd beyond what the kit checks. Marker files in
+# ~/.fake-launchd change it:
+#   no-gui      verbs that need launchd exit 7 with the login hint
+#   keepalive   the job's plist carries KeepAlive
+#   leaky       stop kills the runner only, so DSH and its children live on
+#   unbuilt     release is an unknown verb, and every other verb but
+#               --version exits 7, "not built yet", as the skeleton does
+# Hidden verbs for the self-test: __logout ends every job as a logout
+# does; __login starts every job with a copy in ~/Library/LaunchAgents.
+
+set -u
+state=$HOME/.local/state/dshd
+agents=$HOME/Library/LaunchAgents
+launchd=$HOME/.fake-launchd
+registry=$HOME/.config/dshd/releases
+uid=$(id -u)
+here=$(cd "$(dirname "$0")" && pwd)
+
+fail() {
+	printf '{"error":{"kind":"%s","message":"%s","hint":null}}\n' "$2" "$3" >&2
+	exit "$1"
+}
+
+marker() {
+	[ -e "$launchd/$1" ]
+}
+
+needs_gui() {
+	if marker no-gui; then
+		fail 7 systemd-unavailable "launchctl bootstrap found no GUI login session for this user ($uid); LaunchAgents run only in a login session: log in to the Mac as this user, then run dshd again"
+	fi
+}
+
+outcome() {
+	printf '{"outcome":"%s","name":"%s"}\n' "$1" "$2"
+}
+
+instance() {
+	[ -d "$state/$1" ] || fail 3 not-found "no instance $1"
+}
+
+runner_pid() {
+	cat "$launchd/dshd.$1.pid" 2>/dev/null
+}
+
+loaded() {
+	[ -e "$launchd/dshd.$1.loaded" ]
+}
+
+running() {
+	local pid
+	pid=$(runner_pid "$1")
+	loaded "$1" && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+write_plist() {
+	local dir=$state/$1 keep=
+	if marker keepalive; then
+		keep=$(printf '\t<key>KeepAlive</key>\n\t<true/>\n')
+	fi
+	cat >"$dir/launchd.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dshd.$1</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(cat "$dir/release")/bin/dshd-run</string>
+		<string>$dir</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+$keep
+</dict>
+</plist>
+EOF
+}
+
+# Bootstraps NAME's job: the runner in its own session, as launchd starts it.
+bootstrap() {
+	local dir=$state/$1 pid waited=0
+	rm -f "$dir/stop-intent" "$dir/stopped" "$dir/exited" "$dir/inv" "$dir/log"
+	mkdir -p "$launchd"
+	setsid "$(cat "$dir/release")/bin/dshd-run" "$dir" </dev/null >/dev/null 2>&1 &
+	pid=$!
+	echo "$pid" >"$launchd/dshd.$1.pid"
+	touch "$launchd/dshd.$1.loaded"
+	while [ "$waited" -lt 50 ]; do
+		if grep -q '^dsh web: ' "$dir/log" 2>/dev/null || [ -e "$dir/exited" ]; then
+			return 0
+		fi
+		if ! kill -0 "$pid" 2>/dev/null; then
+			return 1
+		fi
+		sleep 0.2
+		waited=$((waited + 1))
+	done
+	grep -q . "$dir/log" 2>/dev/null
+}
+
+bootout() {
+	local name=$1 pid child waited=0
+	pid=$(runner_pid "$name")
+	child=$(cat "$state/$name/child" 2>/dev/null)
+	touch "$state/$name/stop-intent"
+	if marker leaky; then
+		[ -z "$pid" ] || kill -KILL "$pid" 2>/dev/null
+	elif [ -n "$pid" ]; then
+		kill -TERM -- "-$pid" 2>/dev/null
+		[ -z "$child" ] || kill -TERM "$child" 2>/dev/null
+	fi
+	while [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 50 ]; do
+		sleep 0.2
+		waited=$((waited + 1))
+	done
+	rm -f "$launchd/dshd.$name.loaded" "$launchd/dshd.$name.pid"
+}
+
+get_json() {
+	local name=$1 dir=$state/$1 st inv=null pid=null ending url=null enabled=false
+	instance "$name"
+	if running "$name"; then
+		st=running
+		inv="\"$(cat "$dir/inv")\""
+		pid=$(runner_pid "$name")
+		ending=null
+	elif [ -e "$dir/stopped" ]; then
+		st=stopped
+		ending='"stopped"'
+	elif [ -e "$dir/exited" ]; then
+		st=stopped
+		ending='"exited"'
+	elif loaded "$name"; then
+		st=failed
+		ending='"failed"'
+	else
+		st=stopped
+		ending='"stopped-without-intent"'
+	fi
+	if [ "$st" = running ] && grep -q '^dsh web: ' "$dir/log" 2>/dev/null; then
+		url="\"$(sed -n 's/^dsh web: //p' "$dir/log" | tail -n 1)\""
+	fi
+	[ ! -e "$agents/dshd.$name.plist" ] || enabled=true
+	printf '{"name":"%s","unit":"gui/%s/dshd.%s","state":"%s","invocationId":%s,"mainPid":%s,"restarts":%s,"enabled":%s,"linger":false,"web":{"port":null,"url":%s},"lastRun":{"invocationId":"%s","ending":%s}}\n' \
+		"$name" "$uid" "$name" "$st" "$inv" "$pid" "$(cat "$dir/restarts" 2>/dev/null || echo 0)" "$enabled" "$url" "$(cat "$dir/inv" 2>/dev/null)" "$ending"
+}
+
+verb_run() {
+	local name='' release='' cwd=$PWD dir entry
+	while [ "$#" -gt 0 ]; do
+		case $1 in
+		--name) name=$2; shift ;;
+		--release) release=$2; shift ;;
+		--cwd) cwd=$2; shift ;;
+		--bg | --json) ;;
+		--) shift; break ;;
+		esac
+		shift
+	done
+	needs_gui
+	dir=$state/$name
+	if [ ! -d "$dir" ]; then
+		entry=$(cd -P "$registry/$release" 2>/dev/null && pwd) || fail 3 release-not-found "no release $release"
+		mkdir -p "$dir"
+		printf '%s\n' "$@" >"$dir/args"
+		printf '%s\n' "$cwd" >"$dir/cwd"
+		printf '%s\n' "$entry" >"$dir/release"
+		printf '%s\n' "${DSH_HOME-}" >"$dir/dsh-home"
+		"$entry/bin/dsh" "$1" --dump-default-config >/dev/null 2>&1
+		write_plist "$name"
+	fi
+	bootstrap "$name" || fail 1 start-failed "dsh ended before it was ready"
+	outcome created "$name"
+}
+
+verb_stop() {
+	needs_gui
+	instance "$1"
+	if ! loaded "$1"; then
+		outcome already-stopped "$1"
+		return
+	fi
+	bootout "$1"
+	touch "$state/$1/stopped"
+	outcome stopped "$1"
+}
+
+verb_start() {
+	needs_gui
+	instance "$1"
+	if running "$1"; then
+		outcome already-running "$1"
+		return
+	fi
+	! loaded "$1" || bootout "$1"
+	bootstrap "$1" || fail 1 start-failed "dsh ended before it was ready"
+	outcome started "$1"
+}
+
+verb_rm() {
+	instance "$1"
+	running "$1" && fail 4 instance-running "stop $1 first"
+	rm -rf "${state:?}/$1"
+	rm -f "$agents/dshd.$1.plist"
+	outcome removed "$1"
+}
+
+release_add() {
+	local label=$1 dsh=$3 hash entry
+	dsh=$(cd -P "$(dirname "$dsh")" && pwd)/$(basename "$dsh")
+	while [ -L "$dsh" ]; do
+		dsh=$(readlink -f "$dsh")
+	done
+	hash=$(printf '%s\n%s\n' "$label" "$dsh" | sha256sum | cut -c 1-32)
+	entry=$state/.releases/$hash-dshd-release-$label
+	if [ ! -d "$entry" ]; then
+		mkdir -p "$entry/bin"
+		ln -s "$dsh" "$entry/bin/dsh"
+		cp "$here/../libexec/dshd/dshd-run" "$entry/bin/dshd-run"
+		printf '{"environment":{},"unsetEnvironment":[]}\n' >"$entry/release.json"
+		chmod 0555 "$entry/bin/dshd-run" "$entry/bin" "$entry"
+		chmod 0444 "$entry/release.json"
+	fi
+	mkdir -p "$registry"
+	ln -sfn "$entry" "$registry/$label"
+	outcome created "$label"
+}
+
+release_prune() {
+	local entry held link dir
+	for entry in "$state/.releases"/*; do
+		[ -d "$entry" ] || continue
+		held=0
+		for link in "$registry"/*; do
+			[ "$(cd -P "$link" 2>/dev/null && pwd)" != "$entry" ] || held=1
+		done
+		for dir in "$state"/*/; do
+			[ "$(cat "$dir/release" 2>/dev/null)" != "$entry" ] || held=1
+		done
+		if [ "$held" = 0 ]; then
+			chmod -R u+w "$entry"
+			rm -rf "$entry"
+		fi
+	done
+	printf '{"pruned":true}\n'
+}
+
+release_ls() {
+	local link first=1
+	printf '{"releases":['
+	for link in "$registry"/*; do
+		[ -L "$link" ] || continue
+		[ "$first" = 1 ] || printf ','
+		first=0
+		printf '{"name":"%s"}' "$(basename "$link")"
+	done
+	printf ']}\n'
+}
+
+verb_release() {
+	case ${1-} in
+	add) shift; release_add "$@" ;;
+	rm) rm -f "$registry/$2"; outcome removed "$2" ;;
+	prune) release_prune ;;
+	ls) release_ls ;;
+	*) fail 2 invalid-argument "unknown release verb ${1-}" ;;
+	esac
+}
+
+verb=${1-}
+[ "$#" -eq 0 ] || shift
+if marker unbuilt; then
+	case $verb in
+	--version) echo "dshd 0.1.0" ;;
+	release) fail 2 invalid-argument "unknown verb: release" ;;
+	*) fail 7 systemd-unavailable "launchd support is not built yet: $verb" ;;
+	esac
+	exit 0
+fi
+case $verb in
+--version) echo "dshd 0.1.0" ;;
+run) verb_run "$@" ;;
+start) verb_start "$1" ;;
+stop) verb_stop "$1" ;;
+get) get_json "$1" ;;
+enable)
+	instance "$1"
+	mkdir -p "$agents"
+	cp "$state/$1/launchd.plist" "$agents/dshd.$1.plist"
+	outcome enabled "$1"
+	;;
+disable)
+	rm -f "$agents/dshd.$1.plist"
+	outcome disabled "$1"
+	;;
+rm) verb_rm "$1" ;;
+release) verb_release "$@" ;;
+__logout)
+	for file in "$launchd"/*.loaded; do
+		[ -e "$file" ] || continue
+		name=$(basename "$file" .loaded)
+		name=${name#dshd.}
+		pid=$(runner_pid "$name")
+		[ -z "$pid" ] || kill -KILL -- "-$pid" 2>/dev/null
+		rm -f "$launchd/dshd.$name.loaded" "$launchd/dshd.$name.pid"
+	done
+	;;
+__login)
+	for file in "$agents"/dshd.*.plist; do
+		[ -e "$file" ] || continue
+		name=$(basename "$file" .plist)
+		bootstrap "${name#dshd.}"
+	done
+	;;
+*) fail 2 invalid-argument "unknown verb $verb" ;;
+esac

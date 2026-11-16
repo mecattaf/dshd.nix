@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# The stand-in runner of tests/mac/fake/dshd: runs DSH from the instance's
+# release with the recorded arguments and directory, under a fresh
+# invocation id. When DSH dies by a signal or a non-zero exit and no stop
+# was asked, it runs it again one second later under a new invocation, as
+# the same process (the job keeps its pid). A clean exit ends the run.
+# Argument: the instance directory.
+
+set -u
+dir=$1
+restarts=0
+args=()
+while IFS= read -r arg; do
+	args+=("$arg")
+done <"$dir/args"
+release=$(cat "$dir/release")
+# The environment dshd recorded at creation, as the real runner composes it.
+dsh_home=$(cat "$dir/dsh-home" 2>/dev/null)
+if [ -n "$dsh_home" ]; then
+	export DSH_HOME=$dsh_home
+fi
+cwd=$(cat "$dir/cwd")
+while :; do
+	od -An -N16 -tx1 /dev/urandom | tr -d ' \n' >"$dir/inv"
+	echo "$restarts" >"$dir/restarts"
+	(cd "$cwd" && exec "$release/bin/dsh" "${args[@]}") >"$dir/log" 2>&1 </dev/null &
+	child=$!
+	echo "$child" >"$dir/child"
+	wait "$child"
+	status=$?
+	if [ -e "$dir/stop-intent" ]; then
+		exit 0
+	fi
+	if [ "$status" = 0 ]; then
+		touch "$dir/exited"
+		exit 0
+	fi
+	restarts=$((restarts + 1))
+	sleep 1
+done

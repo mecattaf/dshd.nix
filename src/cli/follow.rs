@@ -66,7 +66,7 @@ pub(super) fn until_end(
     timeout: u64,
 ) -> Result<Concluded, Error> {
     let name = &instance.name;
-    let facts = ctx.systemctl.show(&name.unit())?;
+    let facts = ctx.manager.show(name)?;
     let Some(followed) = invocation(&facts, instance)? else {
         return Err(Error::NotRunning(name.to_string()));
     };
@@ -77,7 +77,7 @@ pub(super) fn until_end(
     } else {
         JournalEnd::Recorded
     };
-    let facts = lifecycle::settle(ctx, &name.unit())?;
+    let facts = lifecycle::settle(ctx, name)?;
     if status::unit_up(&facts) {
         let reason = check_in_reason(name, &followed, &facts, timeout, finished);
         return Ok(Concluded {
@@ -206,7 +206,7 @@ fn recorded_end(ctx: &Context, instance: &Instance, id: &str) -> Result<Option<J
     {
         return Ok(Some(JournalEnd::Recorded));
     }
-    let facts = ctx.systemctl.show(&instance.name.unit())?;
+    let facts = ctx.manager.show(&instance.name)?;
     if !facts.invocation_id.is_empty() && facts.invocation_id != id {
         Ok(Some(JournalEnd::Replaced))
     } else {

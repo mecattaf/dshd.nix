@@ -1,0 +1,9 @@
+disabled services = {
+	"com.apple.ScreenReaderUIServer" => disabled
+	"dshd.masked" => disabled
+	"dshd.web-1" => enabled
+	"com.apple.Siri.agent" => enabled
+}
+login item associations = {
+	"dshd.not-a-service" => "com.example.app"
+}

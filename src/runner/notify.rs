@@ -3,9 +3,12 @@
 
 use std::ffi::OsStr;
 use std::io;
+#[cfg(target_os = "linux")]
 use std::os::linux::net::SocketAddrExt;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::net::{SocketAddr, UnixDatagram};
+#[cfg(target_os = "linux")]
+use std::os::unix::net::SocketAddr;
+use std::os::unix::net::UnixDatagram;
 use std::path::Path;
 
 use crate::runner::log_line;
@@ -68,10 +71,26 @@ impl Notify {
 fn connect(address: &OsStr) -> io::Result<UnixDatagram> {
     let socket = UnixDatagram::unbound()?;
     match address.as_bytes().strip_prefix(b"@") {
-        Some(name) => socket.connect_addr(&SocketAddr::from_abstract_name(name)?)?,
+        Some(name) => connect_abstract(&socket, name)?,
         None => socket.connect(Path::new(address))?,
     }
     Ok(socket)
+}
+
+/// Connects to an abstract socket name, which only Linux has.
+#[cfg(target_os = "linux")]
+fn connect_abstract(socket: &UnixDatagram, name: &[u8]) -> io::Result<()> {
+    socket.connect_addr(&SocketAddr::from_abstract_name(name)?)
+}
+
+/// Abstract socket names exist only on Linux; elsewhere such an address
+/// is refused, never read as a path.
+#[cfg(not(target_os = "linux"))]
+fn connect_abstract(_socket: &UnixDatagram, _name: &[u8]) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "abstract socket names exist only on Linux",
+    ))
 }
 
 #[cfg(test)]
@@ -110,6 +129,7 @@ mod tests {
     }
 
     // catches: a systemd abstract notify address is treated as a filesystem path and readiness never reaches the manager
+    #[cfg(target_os = "linux")]
     #[test]
     fn connects_to_abstract_socket() {
         let name = format!("dshd-notify-test-{}", std::process::id());

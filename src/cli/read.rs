@@ -21,7 +21,7 @@ use crate::runner::RUN_STARTED;
 pub(super) fn run(ctx: &Context, args: &ReadArgs) -> Result<(), Error> {
     let name = &args.name;
     let instance = instance::load(&ctx.state_root, name)?;
-    let facts = ctx.systemctl.show(&name.unit())?;
+    let facts = ctx.manager.show(name)?;
     let Some(id) = follow::invocation(&facts, &instance)? else {
         return Err(Error::NotRunning(name.to_string()));
     };

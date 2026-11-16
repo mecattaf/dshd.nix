@@ -1,0 +1,5 @@
+disabled services = {
+	"com.apple.ScreenReaderUIServer" => true
+	"dshd.masked" => true
+	"dshd.web-1" => false
+}

@@ -17,8 +17,8 @@ use crate::error::Error;
 use crate::instance;
 use crate::name::{InstanceName, StateRoot};
 use crate::out;
+use crate::platform::ServiceManager;
 use crate::record::Transport;
-use crate::systemctl::Systemctl;
 use crate::tool::Tool;
 
 mod attach;
@@ -259,12 +259,10 @@ pub struct Context {
     pub asked: Asked,
     /// Results print as JSON.
     pub json: bool,
-    /// The user manager.
-    pub systemctl: Systemctl,
-    /// `%S`: the manager's state root.
+    /// The service manager: the systemd user manager, or launchd.
+    pub manager: Box<dyn ServiceManager>,
+    /// Where instance directories live (`%S` on Linux).
     pub state_root: StateRoot,
-    /// `%t`: the manager's runtime root (`XDG_RUNTIME_DIR`).
-    pub runtime_root: PathBuf,
     /// `nix-store`, for the release GC roots.
     pub nix_store: Tool,
     /// `nix`, for the closure difference `update` prints.

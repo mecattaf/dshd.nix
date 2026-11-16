@@ -1,0 +1,56 @@
+gui/501 = {
+	type = gui
+	handle = 501
+	active count = 412
+	service count = 410
+	active service count = 120
+	maximum allowed shutdown time = 65 s
+	service stats = 413
+	creator = loginwindow[155]
+	creator euid = 0
+	auxiliary bootstrapper = com.apple.xpc.otherbsd (complete)
+	security context = {
+		uid unset
+		asid = 100008
+	}
+
+	bringup time = 120 ms
+	death port = 0x5a13
+	subdomains = {
+		pid/4242
+	}
+
+	services = {
+		       0      -     	com.apple.cloudphotod
+		     599      -     	com.apple.Finder
+		    4242      -     	dshd.web-1
+		       0     78     	dshd.broken
+		       0      0     	dshd.done
+		       0      -     	dshd.Not_A-Name
+		    4300      -     	dshd.acp
+		       0      -     	com.example.dshd.lookalike
+	}
+
+	unmanaged processes = {
+		com.apple.xpc.launchd.unmanaged.loginwindow.155 = {
+			active count = 1
+			dynamic endpoints = {
+			}
+			pid = 155
+		}
+	}
+
+	endpoints = {
+		     0x6b03     	com.apple.cloudphotod
+	}
+
+	task-special ports = {
+		0x5a03 4 bootstrap
+	}
+
+	disabled services = {
+		"dshd.masked" => disabled
+	}
+
+	properties = 
+}

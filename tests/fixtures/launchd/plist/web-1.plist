@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dshd.web-1</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/u/.local/state/dshd/web-1/current/bin/dshd-run</string>
+		<string>run</string>
+		<string>web-1</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/u/.local/state/dshd/web-1</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>ExitTimeOut</key>
+	<integer>30</integer>
+	<key>AbandonProcessGroup</key>
+	<false/>
+	<key>StandardOutPath</key>
+	<string>/Users/u/.local/state/dshd/web-1/launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/u/.local/state/dshd/web-1/launchd.log</string>
+</dict>
+</plist>

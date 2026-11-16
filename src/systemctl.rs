@@ -15,6 +15,7 @@ use crate::cli::report::{Ending, StateSlug};
 use crate::error::{Error, ToolFailure};
 use crate::fsx;
 use crate::name::{InstanceName, StateRoot, TARGET, TEMPLATE_FILE};
+use crate::platform::ServiceManager;
 use crate::record::{InstanceRecord, LastRun};
 use crate::sys;
 use crate::tool::{Captured, Tool};
@@ -631,13 +632,20 @@ pub enum Task {
 /// inconsistent instance is removed. A down instance is started again,
 /// except a headless one whose task ran: none when dsh exited by itself,
 /// and `start --rerun` otherwise, since a start submits the task again.
+/// The masked and unknown remedies are the platform `manager`'s commands.
 #[must_use]
-pub fn remedy(state: StateSlug, name: &InstanceName, up: bool, task: Task) -> Option<String> {
+pub fn remedy(
+    state: StateSlug,
+    name: &InstanceName,
+    up: bool,
+    task: Task,
+    manager: &dyn ServiceManager,
+) -> Option<String> {
     match state {
         StateSlug::Orphaned if up => Some(format!("dshd stop {name}")),
         StateSlug::Orphaned | StateSlug::Inconsistent => Some(format!("dshd rm {name}")),
-        StateSlug::Masked => Some(format!("systemctl --user unmask {}", name.unit())),
-        StateSlug::Unknown => Some(format!("systemctl --user status {}", name.unit())),
+        StateSlug::Masked => Some(manager.masked_remedy(name)),
+        StateSlug::Unknown => Some(manager.unknown_remedy(name)),
         StateSlug::Failed
         | StateSlug::Stopped
         | StateSlug::Interrupted

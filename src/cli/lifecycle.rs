@@ -14,8 +14,9 @@ use crate::cli::{Context, NameArgs, StopArgs};
 use crate::error::{Error, LINGER_REMEDY, OtherInvocation, StartFailure};
 use crate::fsx::{self, Lock};
 use crate::instance::{self, Instance};
-use crate::name::{InstanceDir, InstanceName, RuntimeDir, TEMPLATE_FILE};
+use crate::name::{InstanceDir, InstanceName, RuntimeDir};
 use crate::out::{self, Style};
+use crate::platform::Action;
 use crate::record::Transport;
 use crate::systemctl::{ActiveState, LoadState, UnitFacts, UnitResult};
 
@@ -45,12 +46,11 @@ pub(super) enum Launch {
 /// a unit on any other invocation than ID is left as it is.
 pub(super) fn stop(ctx: &Context, args: &StopArgs) -> Result<(), Error> {
     let name = &args.name;
-    let unit = name.unit();
     let _fence = match &args.invocation {
         Some(_) => lock_if_present(ctx, name)?,
         None => None,
     };
-    let facts = ctx.systemctl.show(&unit)?;
+    let facts = ctx.manager.show(name)?;
     if let Some(expected) = &args.invocation {
         status::require(ctx, name, &facts)?;
         let dir = ctx.state_root.instance(name);
@@ -64,10 +64,10 @@ pub(super) fn stop(ctx: &Context, args: &StopArgs) -> Result<(), Error> {
         return status::print_outcome(ctx, Shown::new(OutcomeSlug::AlreadyStopped, report));
     }
     let intent = record_stop_intent(ctx, name)?;
-    if let Err(error) = ctx.systemctl.stop(&unit) {
+    if let Err(error) = ctx.manager.stop(name) {
         withdraw_stop_intent(intent);
         return Err(match error {
-            Error::Tool(failure) if failure.tool == "systemctl" => {
+            Error::Tool(failure) if failure.tool == ctx.manager.tool_name() => {
                 let detail = if failure.stderr.is_empty() {
                     Error::Tool(failure).to_string()
                 } else {
@@ -83,7 +83,7 @@ pub(super) fn stop(ctx: &Context, args: &StopArgs) -> Result<(), Error> {
     }
     let report = status::report(ctx, name, false)?;
     let mut shown = Shown {
-        before: vec![echoed(ctx, &["stop", &unit])],
+        before: vec![echoed(ctx, Action::Stop, name)],
         ..Shown::new(OutcomeSlug::Stopped, report)
     };
     if shown.status.enabled {
@@ -167,7 +167,7 @@ pub(super) fn restart(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
     if instance.record.transport == Transport::None {
         return Err(Error::TaskAlreadyRan(args.name.to_string()));
     }
-    refuse_masked(&ctx.systemctl.show(&args.name.unit())?, &args.name)?;
+    refuse_masked(ctx, &ctx.manager.show(&args.name)?, &args.name)?;
     record_stop_intent(ctx, &args.name)?;
     let echo = launch(ctx, &instance, Launch::Restart)?;
     let report = status::report(ctx, &args.name, false)?;
@@ -180,8 +180,10 @@ pub(super) fn restart(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
     status::print_outcome(ctx, shown)
 }
 
-/// `enable NAME`: the wants link and `daemon-reload` of
-/// [`Systemctl::add_wants`](crate::systemctl::Systemctl::add_wants),
+/// `enable NAME`: the manager's
+/// [`enable`](crate::platform::ServiceManager::enable) (on Linux the wants
+/// link and `daemon-reload` of
+/// [`Systemctl::add_wants`](crate::systemctl::Systemctl::add_wants)),
 /// enabled or already-enabled.
 /// A headless instance runs its task again at every start, so it is
 /// refused; so is a masked unit.
@@ -191,21 +193,19 @@ pub(super) fn enable(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
     if instance.record.transport == Transport::None {
         return Err(Error::AutostartNotAllowed(name.to_string()));
     }
-    let unit = name.unit();
-    let facts = ctx.systemctl.show(&unit)?;
-    refuse_masked(&facts, name)?;
+    let facts = ctx.manager.show(name)?;
+    refuse_masked(ctx, &facts, name)?;
     require_template(ctx)?;
     let (outcome, before) = if facts.enabled() {
         (OutcomeSlug::AlreadyEnabled, Vec::new())
     } else {
-        let link = ctx.systemctl.add_wants(&unit)?;
-        let linked = format!("ln -sfn {TEMPLATE_FILE} {}", link.display());
+        let echoes = ctx.manager.enable(name)?;
         (
             OutcomeSlug::Enabled,
-            vec![
-                out::styled(Style::Command, &linked),
-                echoed(ctx, &["daemon-reload"]),
-            ],
+            echoes
+                .iter()
+                .map(|line| out::styled(Style::Command, line))
+                .collect(),
         )
     };
     let report = status::report(ctx, name, false)?;
@@ -225,14 +225,13 @@ pub(super) fn enable(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
 /// `disable NAME`: `systemctl --user disable`, disabled or already-disabled.
 pub(super) fn disable(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
     let name = &args.name;
-    let unit = name.unit();
-    let facts = ctx.systemctl.show(&unit)?;
+    let facts = ctx.manager.show(name)?;
     status::require(ctx, name, &facts)?;
     let (outcome, before) = if facts.enabled() {
-        ctx.systemctl.disable(&unit)?;
+        ctx.manager.disable(name)?;
         (
             OutcomeSlug::Disabled,
-            vec![echoed(ctx, &["disable", &unit])],
+            vec![echoed(ctx, Action::Disable, name)],
         )
     } else {
         (OutcomeSlug::AlreadyDisabled, Vec::new())
@@ -259,12 +258,12 @@ pub(super) fn bring_up(
     created: bool,
 ) -> Result<Shown, Error> {
     let name = &instance.name;
-    let facts = ctx.systemctl.show(&name.unit())?;
+    let facts = ctx.manager.show(name)?;
     let mut before = Vec::new();
     let outcome = if facts.active_state == ActiveState::Active {
         OutcomeSlug::AlreadyRunning
     } else {
-        refuse_masked(&facts, name)?;
+        refuse_masked(ctx, &facts, name)?;
         if created {
             before.push(format!("Created dshd instance {name}."));
         }
@@ -308,7 +307,7 @@ fn next_step(report: &StatusReport) -> Vec<String> {
 
 /// `TemplateMissing` unless the user manager has the unit template.
 pub(super) fn require_template(ctx: &Context) -> Result<(), Error> {
-    if ctx.systemctl.template_installed()? {
+    if ctx.manager.template_installed()? {
         Ok(())
     } else {
         Err(Error::TemplateMissing)
@@ -317,9 +316,13 @@ pub(super) fn require_template(ctx: &Context) -> Result<(), Error> {
 
 /// `UnitMasked` for a masked unit: systemd refuses to start it, and only
 /// its user unmasks it.
-pub(super) fn refuse_masked(facts: &UnitFacts, name: &InstanceName) -> Result<(), Error> {
+pub(super) fn refuse_masked(
+    ctx: &Context,
+    facts: &UnitFacts,
+    name: &InstanceName,
+) -> Result<(), Error> {
     if facts.load_state == LoadState::Masked {
-        Err(Error::UnitMasked(name.unit()))
+        Err(Error::UnitMasked(ctx.manager.unit_id(name)))
     } else {
         Ok(())
     }
@@ -334,7 +337,7 @@ pub(super) fn record_stop_intent(
     ctx: &Context,
     name: &InstanceName,
 ) -> Result<Option<RuntimeDir>, Error> {
-    let runtime = RuntimeDir::under(&ctx.runtime_root, name);
+    let runtime = ctx.manager.runtime_dir(name);
     if fsx::kind(runtime.path())?.is_none() {
         return Ok(None);
     }
@@ -358,18 +361,17 @@ fn withdraw_stop_intent(intent: Option<RuntimeDir>) {
 /// started and has ended already came up: its task ran.
 pub(super) fn launch(ctx: &Context, instance: &Instance, how: Launch) -> Result<String, Error> {
     let name = &instance.name;
-    let unit = name.unit();
-    ctx.systemctl.reset_failed(&unit)?;
-    let (verb, acted) = match how {
-        Launch::Start => ("start", ctx.systemctl.start(&unit)),
-        Launch::Restart => ("restart", ctx.systemctl.restart(&unit)),
+    ctx.manager.reset_failed(name)?;
+    let (action, acted) = match how {
+        Launch::Start => (Action::Start, ctx.manager.start(name)),
+        Launch::Restart => (Action::Restart, ctx.manager.restart(name)),
     };
     match acted {
         Ok(()) => {}
         // systemctl exits non-zero when the unit failed to come up; the
         // unit's own state then says how.
-        Err(Error::Tool(failure)) if failure.tool == "systemctl" => {
-            let facts = ctx.systemctl.show(&unit)?;
+        Err(Error::Tool(failure)) if failure.tool == ctx.manager.tool_name() => {
+            let facts = ctx.manager.show(name)?;
             return Err(if did_not_come_up(&facts, false) {
                 start_failure(ctx, name, &facts)
             } else {
@@ -378,16 +380,16 @@ pub(super) fn launch(ctx: &Context, instance: &Instance, how: Launch) -> Result<
         }
         Err(other) => return Err(other),
     }
-    let facts = settle(ctx, &unit)?;
+    let facts = settle(ctx, name)?;
     if did_not_come_up(&facts, instance.record.transport == Transport::None) {
         return Err(start_failure(ctx, name, &facts));
     }
-    Ok(echoed(ctx, &[verb, &unit]))
+    Ok(echoed(ctx, action, name))
 }
 
-/// The echoed systemctl command line, styled as a command.
-pub(super) fn echoed(ctx: &Context, args: &[&str]) -> String {
-    out::styled(Style::Command, &ctx.systemctl.echo(args))
+/// The echoed manager command line, styled as a command.
+pub(super) fn echoed(ctx: &Context, action: Action, name: &InstanceName) -> String {
+    out::styled(Style::Command, &ctx.manager.echo(action, name))
 }
 
 /// Adds the linger warning when linger is off: `consequence` says what
@@ -408,16 +410,16 @@ fn stop_at_logout() -> String {
 }
 
 /// Reads the unit until it stops moving, at most [`SETTLE_BOUND`].
-pub(super) fn settle(ctx: &Context, unit: &str) -> Result<UnitFacts, Error> {
+pub(super) fn settle(ctx: &Context, name: &InstanceName) -> Result<UnitFacts, Error> {
     let deadline = Instant::now() + SETTLE_BOUND;
-    let mut facts = ctx.systemctl.show(unit)?;
+    let mut facts = ctx.manager.show(name)?;
     while matches!(
         facts.active_state,
         ActiveState::Activating | ActiveState::Deactivating
     ) && Instant::now() < deadline
     {
         thread::sleep(POLL_INTERVAL);
-        facts = ctx.systemctl.show(unit)?;
+        facts = ctx.manager.show(name)?;
     }
     Ok(facts)
 }
@@ -436,15 +438,11 @@ fn did_not_come_up(facts: &UnitFacts, task_ran: bool) -> bool {
 }
 
 fn start_failure(ctx: &Context, name: &InstanceName, facts: &UnitFacts) -> Error {
-    let journal_tail =
-        match ctx
-            .systemctl
-            .journal_tail(&ctx.journalctl, &name.unit(), FAILURE_JOURNAL_LINES)
-        {
-            Ok(lines) => lines,
-            // The tail only illustrates the failure, which is reported either way.
-            Err(error) => vec![format!("(the journal could not be read: {error})")],
-        };
+    let journal_tail = match ctx.manager.failure_tail(name, FAILURE_JOURNAL_LINES) {
+        Ok(lines) => lines,
+        // The tail only illustrates the failure, which is reported either way.
+        Err(error) => vec![format!("(the journal could not be read: {error})")],
+    };
     Error::StartFailed(Box::new(StartFailure {
         name: name.to_string(),
         active_state: status::active_word(&facts.active_state),

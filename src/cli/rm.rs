@@ -15,6 +15,7 @@ use crate::error::Error;
 use crate::fsx;
 use crate::instance;
 use crate::out;
+use crate::platform::Action;
 use crate::systemctl::ActiveState;
 
 /// Runs the verb.
@@ -27,8 +28,7 @@ pub(super) fn run(ctx: &Context, args: &RmArgs) -> Result<(), Error> {
         Some(_) => Some(instance::lock(&dir)?),
         None => None,
     };
-    let unit = name.unit();
-    let facts = ctx.systemctl.show(&unit)?;
+    let facts = ctx.manager.show(name)?;
     if let Some(expected) = &args.invocation {
         status::require(ctx, name, &facts)?;
         lifecycle::require_invocation(
@@ -46,14 +46,14 @@ pub(super) fn run(ctx: &Context, args: &RmArgs) -> Result<(), Error> {
     }
     let report = status::report_from(ctx, name, &facts, false)?;
     if facts.active_state == ActiveState::Failed {
-        ctx.systemctl.reset_failed(&unit)?;
+        ctx.manager.reset_failed(name)?;
     }
     let mut shown = Shown::new(OutcomeSlug::Removed, report);
     if shown.status.enabled {
-        ctx.systemctl.disable(&unit)?;
+        ctx.manager.disable(name)?;
         shown
             .before
-            .push(lifecycle::echoed(ctx, &["disable", &unit]));
+            .push(lifecycle::echoed(ctx, Action::Disable, name));
     }
     instance::remove(&dir)?;
     drop(lock);

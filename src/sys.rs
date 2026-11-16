@@ -1,6 +1,7 @@
 //! The one module that names `libc`: signal masks and `sigwait` for the
 //! runner, `kill` of the runner's own child (and of the runner itself, to
-//! wake its main thread), and `getpwuid_r` for the invoking user. Every
+//! wake its main thread), `getpwuid_r` for the invoking user, `getentropy`
+//! for ids and, on macOS, `sysctlbyname` for the boot session. Every
 //! `unsafe` block carries a `SAFETY` comment.
 
 use std::ffi::{CStr, OsStr};
@@ -126,6 +127,53 @@ pub fn current_user() -> Result<User, Error> {
         }
     }
     Err(lookup_error(io::Error::from_raw_os_error(libc::ERANGE)))
+}
+
+/// 16 bytes from the kernel's entropy pool, through `getentropy`: the
+/// source of instance and invocation ids where no `/proc` exists.
+pub fn random_16() -> Result<[u8; 16], Error> {
+    let mut bytes = [0_u8; 16];
+    // SAFETY: the buffer is valid for writes of its length, which is below
+    // getentropy's limit of 256 bytes.
+    let code = unsafe { libc::getentropy(bytes.as_mut_ptr().cast(), bytes.len()) };
+    if code == 0 {
+        Ok(bytes)
+    } else {
+        Err(Error::io(
+            "read",
+            "the kernel entropy pool (getentropy)",
+            io::Error::last_os_error(),
+        ))
+    }
+}
+
+/// `kern.bootsessionuuid` through `sysctlbyname`, trimmed and lowercased:
+/// the boot identity on macOS. It is only compared for equality.
+#[cfg(target_os = "macos")]
+pub fn boot_session_uuid() -> Result<String, Error> {
+    const NAME: &[u8] = b"kern.bootsessionuuid\0";
+    let failed = |source| Error::io("read", "the sysctl kern.bootsessionuuid", source);
+    let mut buffer = [0_u8; 64];
+    let mut length: libc::size_t = buffer.len();
+    // SAFETY: NAME is NUL-terminated; buffer and length describe one
+    // writable buffer of that size; a null new value sets nothing.
+    let code = unsafe {
+        libc::sysctlbyname(
+            NAME.as_ptr().cast(),
+            buffer.as_mut_ptr().cast(),
+            &raw mut length,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if code != 0 {
+        return Err(failed(io::Error::last_os_error()));
+    }
+    let text = buffer.get(..length).unwrap_or_default();
+    let text = text.strip_suffix(&[0]).unwrap_or(text);
+    let text = std::str::from_utf8(text)
+        .map_err(|_| failed(io::Error::from(io::ErrorKind::InvalidData)))?;
+    Ok(text.trim().to_ascii_lowercase())
 }
 
 /// Unblocks every signal in the child before `exec`, for

@@ -1,0 +1,59 @@
+gui/501/dshd.web-1 = {
+	active count = 0
+	path = /Users/u/.local/state/dshd/web-1/launchd.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /Users/u/.local/state/dshd/web-1/current/bin/dshd-run
+	arguments = {
+		/Users/u/.local/state/dshd/web-1/current/bin/dshd-run
+		run
+		web-1
+	}
+
+	working directory = /Users/u/.local/state/dshd/web-1
+
+	stdout path = /Users/u/.local/state/dshd/web-1/launchd.log
+	stderr path = /Users/u/.local/state/dshd/web-1/launchd.log
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		XPC_SERVICE_NAME => dshd.web-1
+	}
+
+	domain = gui/501 [100008]
+	asid = 100008
+	minimum runtime = 10
+	exit timeout = 30
+	runs = 2
+	immediate reason = speculative
+	forks = 3
+	execs = 1
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	last exit code = 78: EX_CONFIG
+
+	event channels = {
+		"com.apple.example" = {
+			port = 0x0
+			active = 0
+			managed = 1
+			reset = 0
+			state = inactive
+			pid = 1
+		}
+	}
+
+	spawn type = interactive (4)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	properties = runatload | inferred program
+}

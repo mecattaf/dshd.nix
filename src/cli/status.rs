@@ -20,7 +20,7 @@ use crate::error::Error;
 use crate::fsx;
 use crate::instance::{self, Instance};
 use crate::launch;
-use crate::name::{self, InstanceName, RuntimeDir};
+use crate::name::{self, InstanceName};
 use crate::out;
 use crate::record::{LastRun, OsText, Transport};
 use crate::relay::{self, protocol::ProbeLine};
@@ -98,8 +98,15 @@ impl Findings {
 /// Runs the verb. The human page adds the probe failure, the problems
 /// found on disk and, last, whether linger is on.
 pub(super) fn run(ctx: &Context, args: &NameArgs) -> Result<(), Error> {
-    let facts = ctx.systemctl.show(&args.name.unit())?;
-    let gathered = gather(ctx, &args.name, &facts, &systemctl::boot_id()?, true, false)?;
+    let facts = ctx.manager.show(&args.name)?;
+    let gathered = gather(
+        ctx,
+        &args.name,
+        &facts,
+        &ctx.manager.boot_id()?,
+        true,
+        false,
+    )?;
     if ctx.json {
         return out::json(&gathered.report);
     }
@@ -124,7 +131,7 @@ pub(super) fn report(
     name: &InstanceName,
     probe: bool,
 ) -> Result<StatusReport, Error> {
-    let facts = ctx.systemctl.show(&name.unit())?;
+    let facts = ctx.manager.show(name)?;
     report_from(ctx, name, &facts, probe)
 }
 
@@ -135,7 +142,7 @@ pub(super) fn report_from(
     facts: &UnitFacts,
     probe: bool,
 ) -> Result<StatusReport, Error> {
-    Ok(gather(ctx, name, facts, &systemctl::boot_id()?, probe, false)?.report)
+    Ok(gather(ctx, name, facts, &ctx.manager.boot_id()?, probe, false)?.report)
 }
 
 /// `NotFound` unless the instance has a directory or the manager has
@@ -176,13 +183,14 @@ pub(super) fn gather(
         (Some(Transport::None), Some(run)) => Task::Ended(systemctl::ending(run)),
         _ => Task::NotHeadless,
     };
-    let remedy = systemctl::remedy(state, name, unit_up(facts), task).or_else(|| {
-        release
-            .as_ref()
-            .and_then(|(_, release_state)| release_remedy(*release_state, state, name))
-    });
-    let linger = systemctl::linger_enabled(&ctx.user);
-    let mut report = bare_report(name, facts, state, facts.enabled(), linger);
+    let remedy = systemctl::remedy(state, name, unit_up(facts), task, ctx.manager.as_ref())
+        .or_else(|| {
+            release
+                .as_ref()
+                .and_then(|(_, release_state)| release_remedy(*release_state, state, name))
+        });
+    let linger = ctx.manager.linger(&ctx.user);
+    let mut report = bare_report(name, ctx.manager.unit_id(name), facts, state, linger);
     report.remedy = remedy;
     report.release = release.map(|(release, _)| release);
     report.last_run = last_run.map(|run| last_run_report(run, boot, unit_up(facts)));
@@ -376,15 +384,15 @@ fn release_remedy(release: ReleaseState, state: StateSlug, name: &InstanceName) 
 /// The report from the unit alone; the recipe fields stay empty.
 fn bare_report(
     name: &InstanceName,
+    unit: String,
     facts: &UnitFacts,
     state: StateSlug,
-    enabled: bool,
     linger: bool,
 ) -> StatusReport {
     StatusReport {
         name: name.to_string(),
         id: None,
-        unit: name.unit(),
+        unit,
         state,
         active_state: active_word(&facts.active_state),
         sub_state: facts.sub_state.clone(),
@@ -394,7 +402,7 @@ fn bare_report(
         resources: facts.resources,
         invocation_id: (!facts.invocation_id.is_empty()).then(|| facts.invocation_id.clone()),
         since: since(facts),
-        enabled,
+        enabled: facts.enabled(),
         linger,
         transport: None,
         cwd: None,
@@ -495,8 +503,7 @@ fn web_report(
     if !running {
         return WebReport { port, url: None };
     }
-    let url = match fsx::read_text(&RuntimeDir::under(&ctx.runtime_root, &instance.name).web_url())
-    {
+    let url = match fsx::read_text(&ctx.manager.runtime_dir(&instance.name).web_url()) {
         Ok(announced) => announced.map(|announced| web::redact_tokens(announced.trim())),
         Err(error) => {
             findings.note(error.to_string());
@@ -515,9 +522,7 @@ fn probe_relay(ctx: &Context, instance: &Instance) -> Result<ProbeLine, Error> {
         OsString::from(instance.name.as_str()),
     ];
     let mut command = runner.command();
-    command
-        .args(&args)
-        .env("XDG_RUNTIME_DIR", &ctx.runtime_root);
+    command.args(&args).envs(ctx.manager.relay_client_env());
     let (sender, receiver) = mpsc::channel();
     let probing =
         |kind: io::ErrorKind| Error::io("probe", runner.program.clone(), io::Error::from(kind));

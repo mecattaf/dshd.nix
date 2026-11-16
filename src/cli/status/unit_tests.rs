@@ -40,9 +40,9 @@ fn unknown_template_names_are_not_instances() {
 fn bare_report_reads_the_unit() {
     let report = bare_report(
         &name("web-1"),
+        name("web-1").unit(),
         &facts("running.txt"),
         StateSlug::Running,
-        true,
         false,
     );
     assert_eq!(report.unit, name("web-1").unit());
@@ -57,11 +57,12 @@ fn bare_report_reads_the_unit() {
     assert_eq!(report.since, Some(1_794_009_610));
     let stopped = bare_report(
         &name("web-1"),
+        name("web-1").unit(),
         &facts("inactive.txt"),
         StateSlug::Stopped,
-        false,
         true,
     );
+    assert_eq!(report.enabled, facts("running.txt").enabled());
     assert_eq!((stopped.main_pid, stopped.invocation_id), (None, None));
     assert_eq!(stopped.since, Some(1_794_013_210));
     assert!(

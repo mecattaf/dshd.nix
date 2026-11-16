@@ -1,0 +1,112 @@
+//! The run state file `<instance>/run/state.json`: what launchd cannot say
+//! about a run. The macOS runner writes it (mode 0600, atomically) where
+//! the Linux runner talks to systemd: its invocation id, its own pid and
+//! process start time, and its phase, which turns `ready` where Linux
+//! sends `READY=1` and `stopping` where it sends `STOPPING=1`.
+//!
+//! A state file is live only for the process that wrote it: the job's pid
+//! in `launchctl print` must be the file's `pid`, and that process's start
+//! time must equal the file's `processStart`. A pid launchd or the kernel
+//! reused for another process has a later start time, so its file reads
+//! stale. An `exec` (the runner's own restart after a crash) keeps both.
+
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::Error;
+use crate::name::RuntimeDir;
+use crate::platform::launchd::not_built;
+
+/// The file name inside the run directory.
+pub const STATE_FILE: &str = "state.json";
+/// Its mode.
+pub const STATE_MODE: u32 = 0o600;
+/// The per-run files a new run clears before it starts: whatever a runner
+/// that was killed left there is stale data, never a live run.
+pub const PER_RUN_FILES: &[&str] = &[
+    "state.json",
+    "web-url",
+    "acp.sock",
+    "stop-intent",
+    "child-end.json",
+];
+
+/// The run's phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Phase {
+    /// Spawned, not ready yet.
+    Starting,
+    /// Ready: the web URL is recorded, the ACP socket is bound, or the
+    /// headless dsh is spawned.
+    Ready,
+    /// A stop is under way.
+    Stopping,
+    /// The runner is pausing before it restarts a crashed ready dsh.
+    AutoRestart,
+}
+
+/// `run/state.json`. A closed record: a key it does not know is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunState {
+    /// The run's invocation id: 32 lowercase hex digits, new per run.
+    pub invocation_id: String,
+    /// The runner's pid, which is the job's pid.
+    pub pid: u32,
+    /// The runner process's start time, unix seconds, as the kernel
+    /// reports it for that pid.
+    pub process_start: u64,
+    /// The phase.
+    pub phase: Phase,
+    /// Unix seconds when the phase began.
+    pub phase_since: u64,
+}
+
+/// `<run dir>/state.json`.
+#[must_use]
+pub fn path(run_dir: &RuntimeDir) -> PathBuf {
+    run_dir.path().join(STATE_FILE)
+}
+
+/// Reads the state file; `Ok(None)` when there is none. A file that does
+/// not parse is an error.
+pub fn read(run_dir: &RuntimeDir) -> Result<Option<RunState>, Error> {
+    let _ = run_dir;
+    Err(not_built("the run state file"))
+}
+
+/// Writes the state file atomically with [`STATE_MODE`].
+pub fn write(run_dir: &RuntimeDir, state: &RunState) -> Result<(), Error> {
+    let _ = (run_dir, state);
+    Err(not_built("the run state file"))
+}
+
+/// Moves the recorded run to `phase` since `now`; nothing else changes.
+/// A missing state file is an `Io` error.
+pub fn set_phase(run_dir: &RuntimeDir, phase: Phase, now: u64) -> Result<(), Error> {
+    let _ = (run_dir, phase, now);
+    Err(not_built("the run state file"))
+}
+
+/// Whether `state` describes the process launchd runs now: `job_pid` is
+/// the job's pid in `launchctl print`, `process_start` the start time of
+/// that pid (both `None` when unknown, which is never live).
+#[must_use]
+pub fn is_live(state: &RunState, job_pid: Option<u32>, process_start: Option<u64>) -> bool {
+    let _ = (state, job_pid, process_start);
+    false
+}
+
+/// Removes every [`PER_RUN_FILES`] entry present in the run directory and
+/// returns the paths removed, in list order. A missing directory removes
+/// nothing.
+pub fn clear_stale(run_dir: &RuntimeDir) -> Result<Vec<PathBuf>, Error> {
+    let _ = run_dir;
+    Err(not_built("clearing stale run files"))
+}
+
+#[cfg(test)]
+#[path = "runstate_tests.rs"]
+mod tests;

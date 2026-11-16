@@ -257,7 +257,13 @@ fn ending_precedence() {
 #[test]
 fn remedy_per_state() {
     let name = InstanceName::parse("web-1").unwrap();
-    let remedy = |state, up, task| remedy(state, &name, up, task);
+    let manager = crate::platform::systemd::SystemdManager::with_roots(
+        Systemctl::from_env(),
+        Tool::named("journalctl"),
+        StateRoot::new(PathBuf::from("/s")),
+        PathBuf::from("/r"),
+    );
+    let remedy = |state, up, task| remedy(state, &name, up, task, &manager);
     for state in [
         StateSlug::Failed,
         StateSlug::Stopped,

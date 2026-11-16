@@ -13,7 +13,7 @@ use crate::cli::{Asked, AttachArgs, Context};
 use crate::error::{Error, ToolFailure};
 use crate::fsx;
 use crate::instance::{self, Instance};
-use crate::name::{self, RuntimeDir};
+use crate::name;
 use crate::out;
 use crate::record::{OsText, Transport};
 use crate::runner::web;
@@ -51,7 +51,7 @@ pub(super) fn run(ctx: &Context, args: &AttachArgs) -> Result<(), Error> {
         }
     };
     check_flags(args, acp, ctx.asked == Asked::Json)?;
-    if ctx.systemctl.show(&args.name.unit())?.active_state != ActiveState::Active {
+    if ctx.manager.show(&args.name)?.active_state != ActiveState::Active {
         return Err(Error::NotRunning(args.name.to_string()));
     }
     if acp {
@@ -93,7 +93,7 @@ fn refuse(transport: &str, flag: &str) -> Result<(), Error> {
 /// object (`--json`), or opens the URL (`--open`, which prints nothing
 /// but the JSON object).
 fn attach_web(ctx: &Context, args: &AttachArgs) -> Result<(), Error> {
-    let file = RuntimeDir::under(&ctx.runtime_root, &args.name).web_url();
+    let file = ctx.manager.runtime_dir(&args.name).web_url();
     let Some(announced) = fsx::read_text(&file)? else {
         return Err(Error::NotRunning(args.name.to_string()));
     };
@@ -157,7 +157,7 @@ fn attach(ctx: &Context, instance: &Instance, takeover: bool) -> Error {
     command
         .arg("attach")
         .arg(instance.name.as_str())
-        .env("XDG_RUNTIME_DIR", &ctx.runtime_root)
+        .envs(ctx.manager.relay_client_env())
         .stdin(Stdio::inherit());
     if takeover {
         command.arg("--takeover");

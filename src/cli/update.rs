@@ -37,7 +37,7 @@ pub(super) fn run(ctx: &Context, args: &UpdateArgs) -> Result<(), Error> {
     let (old, _) = release::links(&instance.dir)?;
     let changed = instance::update_current(&instance, &ctx.nix_store, &release)?;
     let mut summary = describe(ctx, &instance, &release, old.as_deref(), changed, &removed);
-    let active = ctx.systemctl.show(&name.unit())?.active_state;
+    let active = ctx.manager.show(name)?.active_state;
     if matches!(active, ActiveState::Inactive | ActiveState::Failed) {
         release::collapse_booted(&instance.dir)?;
     }

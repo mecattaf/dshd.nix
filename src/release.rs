@@ -263,6 +263,8 @@ fn is_store_hash(text: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
 }
 
+pub mod store;
+
 #[cfg(test)]
 #[path = "release/unit_tests.rs"]
 mod tests;

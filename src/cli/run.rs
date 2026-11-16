@@ -111,7 +111,7 @@ fn create(ctx: &Context, args: &RunArgs) -> Result<(Lock, Instance, bool, Option
         .transpose()?;
     let dsh = Tool::at("dsh", release.path.join(name::RELEASE_DSH));
     let loaded = if args.name.is_none() {
-        ctx.systemctl.list_loaded_instances()?
+        ctx.manager.list_loaded_instances()?
     } else {
         Vec::new()
     };

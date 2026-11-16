@@ -15,7 +15,6 @@ fn sample(ticks: u64) -> TaskSample {
 
 // catches: run totals in microseconds instead of nanoseconds, or invented I/O byte counts
 #[test]
-#[ignore = "packet D14: rusage conversions"]
 fn run_totals_from_wait4() {
     let totals = run_totals(Some(EndUsage {
         user_usec: 1_500_000,
@@ -31,7 +30,6 @@ fn run_totals_from_wait4() {
 
 // catches: Apple Silicon mach ticks reported as nanoseconds, or counters not summed over the tree
 #[test]
-#[ignore = "packet D14: rusage conversions"]
 fn live_counters_sum_and_convert_ticks() {
     let timebase = Some(Timebase {
         numerator: 125,
@@ -48,7 +46,6 @@ fn live_counters_sum_and_convert_ticks() {
 
 // catches: a failed sample, a missing timebase or an overflow read as 0 instead of unknown
 #[test]
-#[ignore = "packet D14: rusage conversions"]
 fn unavailable_is_none_never_zero() {
     let timebase = Some(Timebase {
         numerator: 1,

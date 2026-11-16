@@ -369,6 +369,7 @@ pub(crate) mod testing {
             let path =
                 std::env::temp_dir().join(format!("dshd-{label}-{}-{sequence}", process::id()));
             if path.exists() {
+                make_writable(&path);
                 fs::remove_dir_all(&path).unwrap();
             }
             fs::create_dir_all(&path).unwrap();
@@ -382,7 +383,27 @@ pub(crate) mod testing {
 
     impl Drop for Scratch {
         fn drop(&mut self) {
+            make_writable(&self.0);
             drop(fs::remove_dir_all(&self.0));
+        }
+    }
+
+    /// Gives every directory under `path` its owner's write permission, so
+    /// a read-only tree a test made (a release store entry) can be removed.
+    /// Without it such a tree outlives the test, and a later run whose
+    /// process id repeats (a fresh PID namespace) cannot reuse the name.
+    fn make_writable(path: &Path) {
+        let Ok(metadata) = fs::symlink_metadata(path) else {
+            return;
+        };
+        if !metadata.is_dir() {
+            return;
+        }
+        drop(fs::set_permissions(path, fs::Permissions::from_mode(0o700)));
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                make_writable(&entry.path());
+            }
         }
     }
 

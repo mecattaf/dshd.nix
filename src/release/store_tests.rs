@@ -51,7 +51,6 @@ fn mode(path: &Path) -> u32 {
 
 // catches: an entry with the wrong layout, writable after creation, or a name version_label cannot read
 #[test]
-#[ignore = "packet D16: directory release store"]
 fn add_writes_a_read_only_entry() {
     let fixture = inputs("store-add");
     let entry = add_entry(&fixture.root(), &fixture.entry(b"{}")).unwrap();
@@ -80,7 +79,6 @@ fn add_writes_a_read_only_entry() {
 
 // catches: identical inputs making a second entry, or different inputs reusing the first
 #[test]
-#[ignore = "packet D16: directory release store"]
 fn identical_inputs_reuse_the_entry() {
     let fixture = inputs("store-reuse");
     let first = add_entry(&fixture.root(), &fixture.entry(b"{}")).unwrap();
@@ -106,7 +104,6 @@ fn identical_inputs_reuse_the_entry() {
 
 // catches: a label that would escape the store or break the entry name accepted
 #[test]
-#[ignore = "packet D16: directory release store"]
 fn bad_labels_are_refused() {
     let fixture = inputs("store-label");
     for label in ["", "../x", "a/b", "has space"] {
@@ -121,7 +118,6 @@ fn bad_labels_are_refused() {
 
 // catches: paths outside the store, or lookalike names, accepted as entries
 #[test]
-#[ignore = "packet D16: directory release store"]
 fn is_entry_needs_the_shape_and_the_place() {
     let fixture = inputs("store-is-entry");
     let entry = add_entry(&fixture.root(), &fixture.entry(b"{}")).unwrap();

@@ -189,6 +189,7 @@ fn ended(status: u8, exit_code: Option<i32>, signal: Option<i32>, stop: Option<i
             stop_signal: stop,
         }),
         tracker: Tracker::default(),
+        usage: None,
     }
 }
 

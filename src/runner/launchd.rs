@@ -58,6 +58,7 @@ use crate::platform::launchd::completion::{self as words, EndWords};
 use crate::platform::launchd::restart::{self, AfterExit, Start, StartHistory, StartLimit};
 use crate::platform::launchd::retention::{self, LogFile};
 use crate::platform::launchd::runstate::{self, Phase, RunState};
+use crate::platform::launchd::rusage::EndUsage;
 use crate::platform::launchd::{
     EXIT_TIMEOUT_SECS, GRACE, RUNS_DIR, STARTUP_TIMEOUT, ids, logs, rusage,
 };
@@ -214,6 +215,9 @@ struct Supervised {
     seen: Option<RunnerEnd>,
     /// dsh's descendants, as sampled.
     tracker: Tracker,
+    /// What `wait4` reported dsh used, when it was reaped and the usage
+    /// converted.
+    usage: Option<EndUsage>,
 }
 
 impl Supervised {
@@ -224,6 +228,7 @@ impl Supervised {
             timed_out: false,
             seen: None,
             tracker: Tracker::default(),
+            usage: None,
         }
     }
 
@@ -268,7 +273,7 @@ fn supervise(launch: &Launch, host: &dyn Host) -> Supervised {
         log_line(&error.to_string());
         terminate(pid);
     }
-    let (end, stop_signal) = watch(&mut child, &serving, &notify, &stop_asked);
+    let (end, stop_signal, usage) = watch(&mut child, &serving, &notify, &stop_asked);
     let timed_out = deadline.disarm();
     let tracker = sampler.map(Sampler::finish).unwrap_or_default();
     let served = serving.map(Serving::finish);
@@ -292,19 +297,21 @@ fn supervise(launch: &Launch, host: &dyn Host) -> Supervised {
             stop_signal,
         }),
         tracker,
+        usage,
     }
 }
 
-/// Supervises dsh until it ended and was reaped. The first stop (a signal,
-/// or `stop_asked`) moves the phase to `stopping`, arms the stop deadline
-/// and runs the transport's stop; a dsh still there at the deadline is
-/// killed, from the main thread like every other signal to dsh.
+/// Supervises dsh until it ended and was reaped with `wait4`, which also
+/// gives what it used. The first stop (a signal, or `stop_asked`) moves the
+/// phase to `stopping`, arms the stop deadline and runs the transport's
+/// stop; a dsh still there at the deadline is killed, from the main thread
+/// like every other signal to dsh.
 fn watch(
     child: &mut Child,
     serving: &Result<Serving, Error>,
     notify: &Notify,
     stop_asked: &AtomicBool,
-) -> (ChildEnd, Option<i32>) {
+) -> (ChildEnd, Option<i32>, Option<EndUsage>) {
     let pid = child.id();
     let kill_due = Arc::new(AtomicBool::new(false));
     let begin_stop = || {
@@ -331,13 +338,13 @@ fn watch(
                 terminate(pid);
             }
         };
-        signal::supervise_with(child, stop_asked, stop, enforce_stop_deadline)
+        signal::supervise_reaping(child, stop_asked, stop, enforce_stop_deadline)
     } else {
         let stop = || {
             begin_stop();
             terminate(pid);
         };
-        signal::supervise_with(child, stop_asked, stop, enforce_stop_deadline)
+        signal::supervise_reaping(child, stop_asked, stop, enforce_stop_deadline)
     }
 }
 
@@ -521,8 +528,9 @@ fn record_end(
         },
     };
     let stop_intent = fsx::kind(&place.runtime.stop_intent())?.is_some();
-    // `wait4`'s usage of dsh is not read by the reap, so every total is null.
-    let resources = rusage::run_totals(None);
+    // `wait4`'s usage of dsh and the descendants it waited for; a refused
+    // start, or a usage that did not convert, is every total null.
+    let resources = rusage::run_totals(supervised.usage);
     run.end = Some(run_end(
         end_words,
         ended_at,

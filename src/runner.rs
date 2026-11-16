@@ -41,7 +41,7 @@ use crate::name::{InstanceDir, InstanceName, RELEASE_DSH, RuntimeDir, StateRoot}
 use crate::record::{ChildEnd, InstanceRecord, LastRun, OsText, RunPatch, RunStdin, Transport};
 use crate::relay::Relay;
 use crate::tool::Tool;
-use crate::{fsx, instance, launch, out, profile, release, sys, systemctl};
+use crate::{fsx, instance, launch, out, platform, profile, release, sys};
 
 use self::notify::Notify;
 
@@ -184,7 +184,7 @@ impl Place {
     fn from_launchd(raw: &str) -> Result<Self, Error> {
         let (name, root) = located(raw)?;
         let dir = root.instance(&name);
-        let runtime = RuntimeDir::new(dir.path().join(crate::platform::launchd::RUN_DIR));
+        let runtime = RuntimeDir::new(dir.path().join(platform::launchd::RUN_DIR));
         fsx::create_dir_private(runtime.path())?;
         Ok(Self {
             name,
@@ -254,7 +254,7 @@ impl Launch {
             place,
             &runner_environment,
             unit_value(INVOCATION_ID),
-            systemctl::boot_id,
+            platform::native_boot_id,
         )
     }
 

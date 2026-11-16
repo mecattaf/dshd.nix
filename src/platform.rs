@@ -151,3 +151,19 @@ pub fn native() -> Result<Box<dyn ServiceManager>, Error> {
 pub fn native() -> Result<Box<dyn ServiceManager>, Error> {
     Ok(Box::new(launchd::LaunchdManager::from_env()?))
 }
+
+/// The boot id of this platform, as [`ServiceManager::boot_id`] gives it,
+/// without building a manager: the kernel's boot id on Linux. The runner
+/// stamps every run with it.
+#[cfg(not(target_os = "macos"))]
+pub fn native_boot_id() -> Result<String, Error> {
+    crate::systemctl::boot_id()
+}
+
+/// The boot id of this platform, as [`ServiceManager::boot_id`] gives it,
+/// without building a manager: `kern.bootsessionuuid` on macOS, since
+/// there is no `/proc`. The runner stamps every run with it.
+#[cfg(target_os = "macos")]
+pub fn native_boot_id() -> Result<String, Error> {
+    crate::sys::boot_session_uuid()
+}

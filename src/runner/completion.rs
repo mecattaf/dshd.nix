@@ -9,7 +9,7 @@ use super::{
 };
 use crate::error::Error;
 use crate::record::{LastRun, OsText, RunEnd};
-use crate::{fsx, instance, release, systemctl};
+use crate::{fsx, instance, release};
 
 /// Records the run, then removes the per-run files whatever happened;
 /// the status `poststop` exits with.
@@ -54,7 +54,7 @@ fn record_last_run(place: &Place) -> Result<(), Error> {
             id: instance::load(&place.root, &place.name)?.record.id,
             release_path: fsx::read_link(&place.dir.booted())?
                 .map_or_else(|| OsText::from(""), OsText::new),
-            boot_id: systemctl::boot_id()?,
+            boot_id: crate::platform::native_boot_id()?,
             started_at: ended_at,
             invocation_id,
             end: None,

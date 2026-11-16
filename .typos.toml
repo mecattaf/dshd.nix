@@ -11,3 +11,5 @@ ACP = "ACP"
 acp = "acp"
 dsh = "dsh"
 dshd = "dshd"
+# libc's `mach_timebase_info` field, as Apple's header names it.
+numer = "numer"

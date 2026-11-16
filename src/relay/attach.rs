@@ -7,7 +7,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::Shutdown;
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{SocketAddr, UnixStream};
 use std::path::Path;
 use std::thread;
 
@@ -24,13 +24,17 @@ const STDIN_THREAD: &str = "dshd-attach-stdin";
 const RELAY: &str = "the relay socket";
 
 /// Connects and exchanges the handshake line. A missing socket is
-/// `NotRunning`.
+/// `NotRunning`. A socket path longer than `sun_path` holds is reached
+/// from inside its directory (see `connect`), which moves this
+/// process's working directory: only a client that has started no other
+/// thread and needs no working directory afterwards calls this, as
+/// `dshd-run attach` and `probe` do.
 pub fn handshake(
     socket: &Path,
     name: &str,
     request: &Handshake,
 ) -> Result<(UnixStream, HandshakeReply), Error> {
-    let stream = match UnixStream::connect(socket) {
+    let stream = match connect(socket) {
         Ok(stream) => stream,
         Err(source)
             if matches!(
@@ -46,6 +50,23 @@ pub fn handshake(
         Ok(reply) => Ok((stream, reply)),
         Err(source) => Err(Error::io("handshake with", socket, source)),
     }
+}
+
+/// Connects to the Unix socket at `socket`. `sun_path` holds 104 bytes on
+/// macOS (108 on Linux), the NUL included, and an instance's socket under
+/// a long home can exceed that; such a path is reached by its file name
+/// from inside its directory, after moving the working directory there.
+/// A path that fits is connected to as it is, as before.
+fn connect(socket: &Path) -> io::Result<UnixStream> {
+    if SocketAddr::from_pathname(socket).is_ok() {
+        return UnixStream::connect(socket);
+    }
+    let dir = socket.parent().filter(|dir| !dir.as_os_str().is_empty());
+    let (Some(dir), Some(file)) = (dir, socket.file_name()) else {
+        return UnixStream::connect(socket);
+    };
+    std::env::set_current_dir(dir)?;
+    UnixStream::connect(Path::new(file))
 }
 
 /// Pumps the process stdio through an attached stream. Returns when the

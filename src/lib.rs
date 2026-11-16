@@ -40,10 +40,11 @@ pub mod relay;
 pub mod release;
 /// The runner, the main process of each instance's unit.
 pub mod runner;
-/// The libc boundary: signal masks, the runner's kill and the user database.
+/// The libc boundary: signal masks, the runner's kill and reap, the user
+/// database and, on macOS, the process calls of the launchd backend.
 #[allow(
     unsafe_code,
-    reason = "the only module that names libc: signal masks, sigwait, kill of the runner's own child, and getpwuid_r"
+    reason = "the only module that names libc: signal masks, sigwait, kill and wait4 of the runner's own child, getpwuid_r, and the macOS process calls (proc_pidinfo, proc_listchildpids, proc_pid_rusage, mach_timebase_info)"
 )]
 pub mod sys;
 /// The user manager as dshd sees it, and the state derived from it.

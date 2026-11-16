@@ -2,6 +2,9 @@
 //! read on a thread, its entries joined into dsh's lines, printed or not,
 //! until the runner's last line or a deadline; then one look at the unit
 //! decides whether the run ended, and `last-run.json` says how. `run`, `wait` and `read --follow` share it.
+//! Under launchd a thread polls the run's log file with
+//! `launchd::follow::Follower` in journalctl's place
+//! (`ServiceManager::run_logs`); the pump and its looks are the same.
 //!
 //! A follower that prints the run reads it from its first line. One that
 //! prints nothing (`wait`, `run --json`) and `read --follow` read only the
@@ -11,7 +14,10 @@
 //! the unit, first soon, then every [`LAST_LOOK`] at most.
 
 use std::io::{BufRead, BufReader};
+use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,6 +31,9 @@ use crate::error::{CHECK_IN, Error};
 use crate::instance::{self, Instance};
 use crate::name::InstanceName;
 use crate::out;
+use crate::platform::RunLogs;
+use crate::platform::launchd::follow::{Begin, Follower};
+use crate::platform::launchd::logs;
 use crate::record::LastRun;
 use crate::runner::RUN_ENDED;
 use crate::systemctl::UnitFacts;
@@ -54,6 +63,9 @@ const FIRST_LOOK: Duration = Duration::from_millis(100);
 
 /// The longest silence between two looks of a follower from now.
 const LAST_LOOK: Duration = Duration::from_secs(5);
+
+/// How often a followed run's log file is read again (launchd).
+const FILE_POLL: Duration = Duration::from_millis(100);
 
 /// Follows the instance's current run, printing its lines when `print`,
 /// until the run ends or `timeout` seconds pass, and concludes. A run that
@@ -163,6 +175,13 @@ pub(super) fn journal(
     if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
         return Ok(JournalEnd::Timeout);
     }
+    if let RunLogs::Files(dir) = ctx.manager.run_logs(&instance.name) {
+        let tail = FileTail::start(&logs::run_log(&dir, id), since)?;
+        let look = (since == Since::Now).then_some(FIRST_LOOK);
+        return pump(&tail.lines, print, deadline, look, || {
+            recorded_end(ctx, instance, id)
+        });
+    }
     let filter = format!("_SYSTEMD_INVOCATION_ID={id}");
     let mut command = ctx.journalctl.command();
     command.args(["--user", filter.as_str(), "-f"]);
@@ -243,6 +262,63 @@ fn read_lines(stdout: impl std::io::Read + Send + 'static) -> Result<Receiver<St
     match spawned {
         Ok(_) => Ok(receiver),
         Err(error) => Err(Error::io("start a thread for", "the journal", error)),
+    }
+}
+
+/// A run's log file followed on a thread (launchd), its lines sent as
+/// journalctl's are. The thread reads the file every [`FILE_POLL`]; it
+/// ends at its next read once this is dropped, or when the file cannot be
+/// read, which closes the channel as the end of journalctl's output does.
+struct FileTail {
+    lines: Receiver<String>,
+    stop: Arc<AtomicBool>,
+}
+
+impl FileTail {
+    /// Follows `path` from the run's first line or from its end now. A
+    /// file that does not exist yet is followed from its first byte once
+    /// it appears.
+    fn start(path: &Path, since: Since) -> Result<Self, Error> {
+        let begin = match since {
+            Since::Start => Begin::Start,
+            Since::Now => Begin::Now,
+        };
+        let mut follower = Follower::open(path, begin)?;
+        let (sender, lines) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
+        let spawned = thread::Builder::new()
+            .name("run-log".to_owned())
+            .spawn(move || {
+                while !stopped.load(Ordering::SeqCst) {
+                    match follower.poll() {
+                        Ok(polled) => {
+                            for line in polled {
+                                if sender.send(line).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            out::error_line(&format!(
+                                "[dshd] cannot follow the run's log: {error}"
+                            ));
+                            return;
+                        }
+                    }
+                    thread::sleep(FILE_POLL);
+                }
+            });
+        match spawned {
+            Ok(_) => Ok(Self { lines, stop }),
+            Err(error) => Err(Error::io("start a thread for", path, error)),
+        }
+    }
+}
+
+impl Drop for FileTail {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
     }
 }
 
@@ -497,6 +573,39 @@ mod tests {
             receiver.try_recv().is_err(),
             "output after the spoofed marker was still read"
         );
+    }
+
+    // catches: a followed run log (launchd) whose new lines never reach the pump, a follower from
+    // now that reprints the run, or one from the start that skips the runner's first line
+    #[test]
+    #[ignore = "packet D11: run log follower"]
+    fn a_run_log_file_feeds_the_pump() {
+        let scratch = crate::fsx::testing::Scratch::new("follow-run-log");
+        let path = scratch.path().join("0123456789abcdef0123456789abcdef.log");
+        std::fs::write(&path, "dshd-run: run started\nold\n").unwrap();
+        let from_now = FileTail::start(&path, Since::Now).unwrap();
+        let from_start = FileTail::start(&path, Since::Start).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        std::io::Write::write_all(&mut file, format!("new\n{RUN_ENDED}: success\n").as_bytes())
+            .unwrap();
+        let bound = Duration::from_secs(10);
+        assert_eq!(from_now.lines.recv_timeout(bound).unwrap(), "new");
+        let deadline = Instant::now() + bound;
+        assert_eq!(
+            pump(&from_now.lines, false, Some(deadline), None, || Ok(Some(
+                JournalEnd::Recorded
+            )))
+            .unwrap(),
+            JournalEnd::Recorded
+        );
+        assert_eq!(
+            from_start.lines.recv_timeout(bound).unwrap(),
+            "dshd-run: run started"
+        );
+        assert_eq!(from_start.lines.recv_timeout(bound).unwrap(), "old");
     }
 
     // catches: a crash and restart described as an uneventful timeout, or EOF described as a passed deadline

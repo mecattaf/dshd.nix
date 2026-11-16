@@ -17,6 +17,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::error::Error;
 use crate::name::{InstanceName, RuntimeDir, StateRoot};
@@ -36,6 +37,19 @@ pub enum Action {
     Restart,
     /// The instance no longer starts with the login session.
     Disable,
+}
+
+/// Where the output of an instance's runs is kept, for `read`, `wait` and
+/// `run` to read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunLogs {
+    /// journald: every entry of a run carries its
+    /// `_SYSTEMD_INVOCATION_ID` (systemd).
+    Journal,
+    /// One file per run, `<dir>/<invocationId>.log`, read with
+    /// `launchd::logs::read_window` and followed with
+    /// `launchd::follow::Follower` (launchd).
+    Files(PathBuf),
 }
 
 /// The service manager that owns instance processes, as the CLI sees it.
@@ -103,6 +117,9 @@ pub trait ServiceManager: fmt::Debug {
     /// The last `lines` lines of the instance's output, for the tail a
     /// `start-failed` error carries.
     fn failure_tail(&self, name: &InstanceName, lines: u32) -> Result<Vec<String>, Error>;
+
+    /// Where the output of the instance's runs is kept.
+    fn run_logs(&self, name: &InstanceName) -> RunLogs;
 
     /// The manager command line a mutating verb echoes.
     fn echo(&self, action: Action, name: &InstanceName) -> String;

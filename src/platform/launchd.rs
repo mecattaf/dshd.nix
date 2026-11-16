@@ -26,8 +26,8 @@ use std::time::Duration;
 
 use crate::error::Error;
 use crate::name::{InstanceDir, InstanceName, RELEASE_RUNNER, RuntimeDir, StateRoot};
-use crate::platform::{Action, ServiceManager};
-use crate::systemctl::UnitFacts;
+use crate::platform::{Action, RunLogs, ServiceManager};
+use crate::systemctl::{ActiveState, Resources, UnitFacts};
 use crate::tool::Tool;
 
 pub mod command;
@@ -84,6 +84,9 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// unknown or the process is gone.
 pub type ProcessStart = fn(u32) -> Option<u64>;
 
+/// The live counters of the process tree under a pid (the job's runner).
+pub type TreeResources = fn(u32) -> Resources;
+
 /// The error of a piece of the macOS backend that is not built yet: exit 7,
 /// as every call that needs the manager returns until it lands.
 #[must_use]
@@ -102,6 +105,7 @@ pub struct LaunchdManager {
     stop_wait: Duration,
     poll_interval: Duration,
     process_start: ProcessStart,
+    tree_resources: TreeResources,
 }
 
 impl LaunchdManager {
@@ -129,6 +133,7 @@ impl LaunchdManager {
             stop_wait: Duration::from_secs(u64::from(EXIT_TIMEOUT_SECS)) + GRACE,
             poll_interval: POLL_INTERVAL,
             process_start: native_process_start,
+            tree_resources: native_tree_resources,
         }
     }
 
@@ -153,6 +158,29 @@ impl LaunchdManager {
     pub fn with_process_start(mut self, process_start: ProcessStart) -> Self {
         self.process_start = process_start;
         self
+    }
+
+    /// The same manager with another source of live counters (tests).
+    #[must_use]
+    pub fn with_tree_resources(mut self, tree_resources: TreeResources) -> Self {
+        self.tree_resources = tree_resources;
+        self
+    }
+
+    /// `facts` with the live counters of the job's process tree, while a
+    /// run is up: `facts::unit_facts` leaves every counter unknown, and
+    /// the tree is sampled here, from the runner's pid down. A run that is
+    /// not up keeps them unknown, as systemd reports no counters then.
+    #[must_use]
+    pub fn with_live_resources(&self, mut facts: UnitFacts) -> UnitFacts {
+        let up = matches!(
+            facts.active_state,
+            ActiveState::Active | ActiveState::Activating | ActiveState::Deactivating
+        );
+        if up && facts.main_pid != 0 {
+            facts.resources = (self.tree_resources)(facts.main_pid);
+        }
+        facts
     }
 
     /// The `launchctl` runner.
@@ -289,11 +317,15 @@ impl ServiceManager for LaunchdManager {
     }
 
     fn show(&self, name: &InstanceName) -> Result<UnitFacts, Error> {
-        query::show(self, name)
+        query::show(self, name).map(|facts| self.with_live_resources(facts))
     }
 
     fn show_many(&self, names: &[InstanceName]) -> Result<Vec<UnitFacts>, Error> {
-        query::show_many(self, names)
+        let all = query::show_many(self, names)?;
+        Ok(all
+            .into_iter()
+            .map(|facts| self.with_live_resources(facts))
+            .collect())
     }
 
     fn list_loaded_instances(&self) -> Result<Vec<InstanceName>, Error> {
@@ -334,6 +366,10 @@ impl ServiceManager for LaunchdManager {
         logs::failure_tail(&self.runs_dir(name), &self.launchd_log(name), lines)
     }
 
+    fn run_logs(&self, name: &InstanceName) -> RunLogs {
+        RunLogs::Files(self.runs_dir(name))
+    }
+
     fn echo(&self, action: Action, name: &InstanceName) -> String {
         let target = self.service_target(name);
         let plist = self.plist_path(name);
@@ -366,11 +402,36 @@ impl ServiceManager for LaunchdManager {
     }
 }
 
-/// The start time of a process on this platform. The macOS source
-/// (`proc_pidinfo`) is not built yet, so it is unknown and no state file
-/// reads live.
+/// The start time of a process on macOS: `proc_pidinfo`.
+#[cfg(target_os = "macos")]
+fn native_process_start(pid: u32) -> Option<u64> {
+    crate::sys::process_start(pid)
+}
+
+/// Off macOS the backend runs only under test, where the bench supplies
+/// start times: a real one is unknown, so no state file reads live.
+#[cfg(not(target_os = "macos"))]
 fn native_process_start(_pid: u32) -> Option<u64> {
     None
+}
+
+/// The live counters of the process tree under `root` on macOS: one
+/// `proc_pid_rusage` sample per process that has not exited (a zombie
+/// holds no memory and runs nothing), converted with the timebase.
+#[cfg(target_os = "macos")]
+fn native_tree_resources(root: u32) -> Resources {
+    let samples: Vec<_> = crate::sys::process_tree(root)
+        .iter()
+        .filter(|process| !process.zombie)
+        .map(|process| crate::sys::task_sample(process.pid))
+        .collect();
+    rusage::live_counters(&samples, crate::sys::timebase())
+}
+
+/// Off macOS there is no tree to sample: every counter is unknown.
+#[cfg(not(target_os = "macos"))]
+fn native_tree_resources(_root: u32) -> Resources {
+    Resources::default()
 }
 
 /// `kern.bootsessionuuid`, lowercased: the boot identity on macOS.

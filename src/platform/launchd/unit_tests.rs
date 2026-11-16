@@ -19,6 +19,10 @@ fn names_are_fixed() {
     assert_eq!(manager.plist_path(name), instance.join("launchd.plist"));
     assert_eq!(manager.launchd_log(name), instance.join("launchd.log"));
     assert_eq!(manager.runs_dir(name), instance.join("runs"));
+    assert_eq!(
+        manager.run_logs(name),
+        RunLogs::Files(instance.join("runs"))
+    );
     assert_eq!(manager.runtime_dir(name).path(), instance.join("run"));
     assert_eq!(
         manager.agent_copy(name),
@@ -85,4 +89,54 @@ fn job_lookup_classifies_failures() {
         bench.fake.calls().first(),
         Some(&argv(&["print", "gui/501/dshd.web-1"]))
     );
+}
+
+// catches: live counters left unknown for a run that is up, sampled from pid 0, or sampled for a
+// run that is not up (systemd reports none then), or invented off macOS
+#[test]
+fn live_counters_come_from_the_job_tree_while_up() {
+    use crate::platform::launchd::fake::FakeLaunchctl;
+    use crate::systemctl::{ActiveState, Resources};
+    let home = PathBuf::from("/Users/u");
+    let counted = |pid: u32| Resources {
+        tasks_current: Some(u64::from(pid)),
+        ..Resources::default()
+    };
+    let manager = LaunchdManager::new(Box::new(FakeLaunchctl::default()), 501, home.clone())
+        .with_tree_resources(counted);
+    let mut facts =
+        crate::systemctl::parse_show(include_str!("../../../tests/fixtures/show/running.txt"))
+            .unwrap()
+            .pop()
+            .unwrap();
+    facts.resources = Resources::default();
+    facts.main_pid = 42;
+    for state in [
+        ActiveState::Active,
+        ActiveState::Activating,
+        ActiveState::Deactivating,
+    ] {
+        facts.active_state = state;
+        let live = manager.with_live_resources(facts.clone());
+        assert_eq!(live.resources.tasks_current, Some(42));
+    }
+    facts.active_state = ActiveState::Inactive;
+    assert_eq!(
+        manager.with_live_resources(facts.clone()).resources,
+        Resources::default()
+    );
+    facts.active_state = ActiveState::Active;
+    facts.main_pid = 0;
+    assert_eq!(
+        manager.with_live_resources(facts.clone()).resources,
+        Resources::default()
+    );
+    facts.main_pid = 42;
+    let native = LaunchdManager::new(Box::new(FakeLaunchctl::default()), 501, home);
+    if cfg!(not(target_os = "macos")) {
+        assert_eq!(
+            native.with_live_resources(facts).resources,
+            Resources::default()
+        );
+    }
 }

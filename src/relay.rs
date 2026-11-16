@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufReader};
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, ChildStdout};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,7 +31,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::error::Error;
-use crate::name::{InstanceName, RuntimeDir};
+use crate::name::InstanceName;
 use crate::relay::held::Held;
 use crate::relay::protocol::{Handshake, HandshakeReply, ProbeLine, Refusal};
 use crate::relay::pump::Frame;
@@ -58,6 +58,7 @@ const SOCKET_MODE: u32 = 0o600;
 /// reach the controller before closing it.
 const CHILD_EOF_GRACE: Duration = Duration::from_secs(1);
 /// The variable naming the user's runtime root, where clients find the socket.
+#[cfg(not(target_os = "macos"))]
 const RUNTIME_ROOT: &str = "XDG_RUNTIME_DIR";
 /// The thread that routes dsh's stdout.
 const CHILD_THREAD: &str = "dshd-acp-child";
@@ -71,6 +72,9 @@ const CONNECTION_THREAD: &str = "dshd-acp-conn";
 pub struct Relay {
     shared: Arc<Shared>,
     socket: PathBuf,
+    /// What the socket was bound by: `socket`, or its path relative to the
+    /// working directory when `socket` is longer than `sun_path` holds.
+    address: PathBuf,
     accept: JoinHandle<()>,
     pump: JoinHandle<()>,
 }
@@ -177,14 +181,22 @@ struct ChildRequest {
 
 impl Relay {
     /// Binds `socket` (0600 inside the 0700 runtime directory), takes the
-    /// child's pipes and starts the pump threads.
+    /// child's pipes and starts the pump threads. A socket longer than
+    /// `sun_path` holds is bound by its path relative to the working
+    /// directory when it lies inside it: the macOS runner's working
+    /// directory is the instance directory, so its `run/acp.sock` stays in
+    /// reach however long the home is.
     pub fn start(
         socket: &Path,
         child_stdin: ChildStdin,
         child_stdout: ChildStdout,
     ) -> Result<Self, Error> {
+        let address = std::env::current_dir()
+            .ok()
+            .and_then(|cwd| bindable(socket, &cwd))
+            .unwrap_or_else(|| socket.to_owned());
         let listener =
-            UnixListener::bind(socket).map_err(|source| Error::io("bind", socket, source))?;
+            UnixListener::bind(&address).map_err(|source| Error::io("bind", socket, source))?;
         // bind(2) takes no mode, and the 0700 runtime directory admits no one else meanwhile.
         let restricted = fs::set_permissions(socket, fs::Permissions::from_mode(SOCKET_MODE)); // gate: allow R8
         restricted.map_err(|source| Error::io("restrict", socket, source))?;
@@ -206,6 +218,7 @@ impl Relay {
         Ok(Self {
             shared,
             socket: socket.to_owned(),
+            address,
             accept,
             pump,
         })
@@ -264,11 +277,12 @@ impl Relay {
         let Self {
             shared,
             socket,
+            address,
             accept,
             pump,
         } = self;
         shared.stopping.store(true, Ordering::SeqCst);
-        match UnixStream::connect(&socket) {
+        match UnixStream::connect(&address) {
             Ok(wake) => {
                 drop(wake);
                 join(accept, ACCEPT_THREAD);
@@ -289,10 +303,10 @@ impl Relay {
 }
 
 /// `dshd-run attach NAME [--takeover]`: connects to the socket under
-/// `$XDG_RUNTIME_DIR/dshd/NAME`, performs the handshake, then pumps the
-/// caller's stdio to the relay until either side ends. Exit 0 on a clean
-/// end, 4 when refused (attached-elsewhere), 5 when the instance is not
-/// running, 1 on I/O failure.
+/// `$XDG_RUNTIME_DIR/dshd/NAME` (on macOS `<instance>/run`), performs the
+/// handshake, then pumps the caller's stdio to the relay until either side
+/// ends. Exit 0 on a clean end, 4 when refused (attached-elsewhere), 5
+/// when the instance is not running, 1 on I/O failure.
 pub fn attach(name: &str, takeover: bool) -> u8 {
     conclude(attach_stdio(name, takeover))
 }
@@ -320,6 +334,7 @@ fn print_probe(name: &str) -> Result<(), Error> {
 }
 
 /// `$XDG_RUNTIME_DIR/dshd/NAME/acp.sock`.
+#[cfg(not(target_os = "macos"))]
 fn client_socket(name: &str) -> Result<PathBuf, Error> {
     let name = InstanceName::parse(name)?;
     let root = std::env::var_os(RUNTIME_ROOT)
@@ -328,7 +343,19 @@ fn client_socket(name: &str) -> Result<PathBuf, Error> {
     let root = root.ok_or_else(|| {
         Error::SystemdUnavailable(format!("{RUNTIME_ROOT} is not set to an absolute path"))
     })?;
-    Ok(RuntimeDir::under(&root, &name).acp_socket())
+    Ok(crate::name::RuntimeDir::under(&root, &name).acp_socket())
+}
+
+/// `<instance>/run/acp.sock`, the instance under the home the password
+/// database names, as the launchd manager names it: launchd hands a
+/// client no runtime directory, and `$XDG_RUNTIME_DIR` is not read. The
+/// path may be longer than `sun_path`; `attach::handshake` reaches it.
+#[cfg(target_os = "macos")]
+fn client_socket(name: &str) -> Result<PathBuf, Error> {
+    use crate::platform::ServiceManager;
+    let name = InstanceName::parse(name)?;
+    let manager = crate::platform::launchd::LaunchdManager::from_env()?;
+    Ok(manager.runtime_dir(&name).acp_socket())
 }
 
 /// The error for a reply that is not the one asked for.
@@ -505,6 +532,19 @@ fn probe_line(state: &State) -> ProbeLine {
     }
 }
 
+/// The path to bind `socket` by in a process whose working directory is
+/// `cwd`: `socket` itself when it fits `sun_path`; else its path relative
+/// to `cwd` when it lies inside `cwd` and that fits; else `None`, and the
+/// bind fails as it would have.
+fn bindable(socket: &Path, cwd: &Path) -> Option<PathBuf> {
+    if SocketAddr::from_pathname(socket).is_ok() {
+        return Some(socket.to_owned());
+    }
+    let relative = socket.strip_prefix(cwd).ok()?;
+    (!relative.as_os_str().is_empty() && SocketAddr::from_pathname(relative).is_ok())
+        .then(|| relative.to_owned())
+}
+
 /// Writes one handshake reply line.
 fn write_reply(stream: &UnixStream, reply: &HandshakeReply) -> io::Result<()> {
     let line = serde_json::to_vec(reply)?;
@@ -531,5 +571,33 @@ fn spawn(
 fn join(handle: JoinHandle<()>, name: &str) {
     if handle.join().is_err() {
         log_line(&format!("the relay thread {name} panicked"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // catches: a socket longer than sun_path bound by its full path (which fails), bound relative
+    // to a directory it is not inside, or a short socket bound by anything but its own path
+    #[test]
+    fn a_long_socket_is_bound_relative_to_the_working_directory() {
+        let short = Path::new("/srv/state/dshd/web/run/acp.sock");
+        assert_eq!(
+            bindable(short, Path::new("/elsewhere")),
+            Some(short.to_owned())
+        );
+        let home = PathBuf::from("/Users").join("u".repeat(90));
+        let instance = home.join(".local/state/dshd/web");
+        let long = instance.join("run/acp.sock");
+        assert!(SocketAddr::from_pathname(&long).is_err());
+        assert_eq!(
+            bindable(&long, &instance),
+            Some(PathBuf::from("run/acp.sock"))
+        );
+        assert_eq!(bindable(&long, Path::new("/srv")), None);
+        assert_eq!(bindable(&long, &long), None);
+        let deep = PathBuf::from("x".repeat(120)).join("acp.sock");
+        assert_eq!(bindable(&Path::new("/").join(deep), Path::new("/")), None);
     }
 }

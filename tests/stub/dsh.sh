@@ -92,9 +92,12 @@ record_invocation() {
 	# Read by the shell itself before anything forks, since a shell may block
 	# signals around a fork.
 	blocked=absent
-	while read -r key value; do
-		[ "$key" != SigBlk: ] || blocked=$value
-	done </proc/self/status
+	# macOS has no /proc: the mask is then recorded as absent.
+	if [ -r /proc/self/status ]; then
+		while read -r key value; do
+			[ "$key" != SigBlk: ] || blocked=$value
+		done </proc/self/status
+	fi
 	{
 		printf 'invocation %s\nargc %s\nargv ' "$$" "$#"
 		if [ "$#" -gt 0 ]; then
@@ -118,10 +121,20 @@ run_after_ready() {
 	log "after-ready $$ $?"
 }
 
+# The sha256 of stdin: sha256sum, or on a system without it (macOS)
+# shasum, whose output has the same shape.
+sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum
+	else
+		shasum -a 256
+	fi
+}
+
 report_stdin() {
 	for arg in "$@"; do
 		[ "$arg" = - ] || continue
-		digest=$(sha256sum) || digest=unreadable
+		digest=$(sha256) || digest=unreadable
 		printf 'stub-dsh: stdin sha256=%s\n' "${digest%% *}" >&2
 		log "stdin $$ ${digest%% *}"
 		return
@@ -129,7 +142,7 @@ report_stdin() {
 }
 
 report_patch() {
-	digest=$(sha256sum 2>/dev/null <"$1") || digest=unreadable
+	digest=$(sha256 2>/dev/null <"$1") || digest=unreadable
 	printf 'stub-dsh: patch %s sha256=%s\n' "$1" "${digest%% *}" >&2
 }
 

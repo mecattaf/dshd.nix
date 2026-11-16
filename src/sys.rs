@@ -4,9 +4,12 @@
 //! `getpwuid_r` for the invoking user, `getentropy` for ids and, on macOS,
 //! `sysctlbyname` for the boot session and the process calls of the
 //! launchd backend: `proc_pidinfo` for a process's identity and start
-//! time, `proc_listchildpids` and `proc_listpgrppids` for its tree and
-//! group, `proc_pid_rusage` and `mach_timebase_info` for its live
-//! counters. Every `unsafe` block carries a `SAFETY` comment.
+//! time, `proc_listallpids` for the process table, `proc_listchildpids`
+//! and `proc_listpgrppids` for a tree and a group, `proc_pid_rusage` and
+//! `mach_timebase_info` for the live counters, and `sysctl`
+//! `KERN_PROCARGS2` for a process's arguments and environment (the
+//! integration tests' leak check). Every `unsafe` block carries a
+//! `SAFETY` comment.
 
 use std::ffi::{CStr, OsStr};
 use std::io;
@@ -36,6 +39,10 @@ const TREE_MAX: usize = 4096;
 /// answer fills the buffer, up to [`TREE_MAX`].
 #[cfg(target_os = "macos")]
 const PID_LIST_START: usize = 64;
+/// Most pids one listing of every process holds: far above the process
+/// limit of any macOS (`kern.maxproc`), so the listing is never cut short.
+#[cfg(target_os = "macos")]
+const ALL_PIDS_MAX: usize = 1 << 20;
 /// Bytes per unit of `ru_maxrss`: bytes on macOS.
 #[cfg(target_os = "macos")]
 const MAXRSS_UNIT: u64 = 1;
@@ -85,6 +92,18 @@ pub struct Reaped {
     /// waited for; `None` when a value does not convert (a negative time,
     /// an overflowing sum), never an invented zero.
     pub usage: Option<EndUsage>,
+}
+
+/// What a process was started with: its argument vector and its
+/// environment, each entry as the kernel holds it (`NAME=VALUE` for the
+/// environment).
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessArguments {
+    /// The argument vector, `argv[0]` first.
+    pub argv: Vec<std::ffi::OsString>,
+    /// The environment entries, in the order the process received them.
+    pub environment: Vec<std::ffi::OsString>,
 }
 
 /// The invoking user, from the passwd database.
@@ -488,6 +507,113 @@ pub fn kill_identified(identity: &ProcessIdentity, signal: i32) -> Result<bool, 
     }
 }
 
+/// Every pid of the machine now (`proc_listallpids`), zombies included
+/// when the kernel lists them. An error when the call fails, so an empty
+/// table is never mistaken for one that could not be read.
+#[cfg(target_os = "macos")]
+pub fn all_pids() -> Result<Vec<u32>, Error> {
+    listed_pids_up_to(ALL_PIDS_MAX, |buffer, bytes| {
+        // SAFETY: `listed_pids_up_to` hands a buffer writable for `bytes`
+        // bytes and alive for the call; the kernel writes whole pids into
+        // it, at most that many bytes.
+        unsafe { libc::proc_listallpids(buffer, bytes) }
+    })
+    .ok_or_else(|| {
+        Error::io(
+            "list",
+            "every process (proc_listallpids)",
+            io::Error::last_os_error(),
+        )
+    })
+}
+
+/// The argument vector and environment process `pid` was started with,
+/// as `sysctl` `KERN_PROCARGS2` copies them from its memory: the macOS
+/// reading of `/proc/PID/cmdline` and `/proc/PID/environ`. `None` when the
+/// process is gone, is a zombie, or is not this user's to read. The
+/// product reads no other process's environment; the integration tests'
+/// leak check finds what a test left running by it.
+#[cfg(target_os = "macos")]
+#[must_use]
+pub fn process_arguments(pid: u32) -> Option<ProcessArguments> {
+    let target = positive_pid(pid)?;
+    let mut buffer = vec![0_u8; argument_space()?];
+    let mut length: libc::size_t = buffer.len();
+    let mut name = [libc::CTL_KERN, libc::KERN_PROCARGS2, target];
+    let levels = libc::c_uint::try_from(name.len()).ok()?;
+    // SAFETY: `name` holds `levels` integers and is alive for the call;
+    // `buffer` and `length` describe one writable buffer of that many
+    // bytes, which the kernel fills and whose used length it writes back;
+    // a null new value with length 0 sets nothing.
+    let code = unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            levels,
+            buffer.as_mut_ptr().cast(),
+            &raw mut length,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if code != 0 {
+        return None;
+    }
+    buffer.truncate(length);
+    parse_procargs(&buffer)
+}
+
+/// `kern.argmax`: the most bytes of arguments and environment a process
+/// can have been started with, the buffer `KERN_PROCARGS2` needs.
+#[cfg(target_os = "macos")]
+fn argument_space() -> Option<usize> {
+    let mut name = [libc::CTL_KERN, libc::KERN_ARGMAX];
+    let levels = libc::c_uint::try_from(name.len()).ok()?;
+    let mut value: libc::c_int = 0;
+    let mut length: libc::size_t = size_of::<libc::c_int>();
+    // SAFETY: `name` holds `levels` integers; `value` and `length`
+    // describe one writable `c_int`; a null new value sets nothing.
+    let code = unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            levels,
+            (&raw mut value).cast(),
+            &raw mut length,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if code != 0 || length != size_of::<libc::c_int>() {
+        return None;
+    }
+    usize::try_from(value).ok().filter(|space| *space > 0)
+}
+
+/// The `KERN_PROCARGS2` layout: `argc` as a native `int`, the executable
+/// path and the NUL bytes that pad it, `argc` NUL-terminated arguments,
+/// then the NUL-terminated environment entries up to an empty one (what
+/// follows is the loader's own strings). Only NUL-terminated strings
+/// count; `None` when the arguments are cut short.
+#[cfg(any(target_os = "macos", test))]
+fn parse_procargs(bytes: &[u8]) -> Option<ProcessArguments> {
+    let (count, rest) = bytes.split_first_chunk::<4>()?;
+    let count = usize::try_from(i32::from_ne_bytes(*count)).ok()?;
+    let mut strings = rest
+        .split_inclusive(|byte| *byte == 0)
+        .map_while(|piece| piece.strip_suffix(&[0]));
+    strings.next()?;
+    let mut strings = strings.skip_while(|string| string.is_empty());
+    let text = |string: &[u8]| OsStr::from_bytes(string).to_owned();
+    let argv: Vec<_> = strings.by_ref().take(count).map(text).collect();
+    if argv.len() != count {
+        return None;
+    }
+    let environment = strings
+        .take_while(|string| !string.is_empty())
+        .map(text)
+        .collect();
+    Some(ProcessArguments { argv, environment })
+}
+
 /// Unblocks every signal in the child before `exec`, for
 /// `CommandExt::pre_exec`.
 fn unblock_all_for_child() -> io::Result<()> {
@@ -621,34 +747,43 @@ fn walk(root: u32, mut children_of: impl FnMut(u32) -> Vec<u32>) -> Vec<(u32, Op
     found
 }
 
+/// The pids a libproc listing writes through `list(buffer, bytes)`, at
+/// most [`TREE_MAX`]; empty when the call fails, as libproc answers for a
+/// pid that is gone.
+#[cfg(target_os = "macos")]
+fn listed_pids(list: impl FnMut(*mut libc::c_void, libc::c_int) -> libc::c_int) -> Vec<u32> {
+    listed_pids_up_to(TREE_MAX, list).unwrap_or_default()
+}
+
 /// The pids a libproc listing writes through `list(buffer, bytes)`, which
 /// answers a count. The buffer starts zeroed and grows while the answer
-/// fills it, up to [`TREE_MAX`] pids. libproc's listing wrappers answer a
-/// count of pids, its raw call a count of bytes: slots past the pids
-/// written stay 0 and are dropped, so either reading gives the same pids.
+/// fills it, up to `max` pids. libproc's listing wrappers answer a count
+/// of pids, its raw call a count of bytes: slots past the pids written
+/// stay 0 and are dropped, so either reading gives the same pids. `None`
+/// when the call fails (a negative answer).
 #[cfg(target_os = "macos")]
-fn listed_pids(mut list: impl FnMut(*mut libc::c_void, libc::c_int) -> libc::c_int) -> Vec<u32> {
-    let mut capacity = PID_LIST_START;
+fn listed_pids_up_to(
+    max: usize,
+    mut list: impl FnMut(*mut libc::c_void, libc::c_int) -> libc::c_int,
+) -> Option<Vec<u32>> {
+    let mut capacity = PID_LIST_START.min(max);
     loop {
         let mut buffer: Vec<libc::pid_t> = vec![0; capacity];
-        let Some(bytes) = capacity
+        let bytes = capacity
             .checked_mul(size_of::<libc::pid_t>())
-            .and_then(|bytes| libc::c_int::try_from(bytes).ok())
-        else {
-            return Vec::new();
-        };
-        let Ok(count) = usize::try_from(list(buffer.as_mut_ptr().cast(), bytes)) else {
-            return Vec::new();
-        };
-        if count < capacity || capacity >= TREE_MAX {
+            .and_then(|bytes| libc::c_int::try_from(bytes).ok())?;
+        let count = usize::try_from(list(buffer.as_mut_ptr().cast(), bytes)).ok()?;
+        if count < capacity || capacity >= max {
             buffer.truncate(count);
-            return buffer
-                .into_iter()
-                .filter_map(|pid| u32::try_from(pid).ok())
-                .filter(|pid| *pid > 0)
-                .collect();
+            return Some(
+                buffer
+                    .into_iter()
+                    .filter_map(|pid| u32::try_from(pid).ok())
+                    .filter(|pid| *pid > 0)
+                    .collect(),
+            );
         }
-        capacity = capacity.saturating_mul(2);
+        capacity = capacity.saturating_mul(2).min(max);
     }
 }
 
@@ -824,6 +959,39 @@ mod tests {
         assert!(!first.same_process(&other));
     }
 
+    // catches: the KERN_PROCARGS2 layout misread: the padding after the executable path taken for
+    // arguments, an argument taken for the environment, the loader's strings after the empty entry
+    // taken for the environment, or a buffer cut short read as a whole process
+    #[test]
+    fn procargs_layout() {
+        let mut bytes = 2_i32.to_ne_bytes().to_vec();
+        bytes.extend_from_slice(
+            b"/bin/sleep\0\0\0\0sleep\0HOME=/x\0HOME=/x\0PATH=/bin\0\0executable_path=/bin/sleep\0",
+        );
+        let parsed = parse_procargs(&bytes).unwrap();
+        let text = |strings: &[std::ffi::OsString]| -> Vec<String> {
+            strings
+                .iter()
+                .map(|string| string.to_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(text(&parsed.argv), ["sleep", "HOME=/x"]);
+        assert_eq!(text(&parsed.environment), ["HOME=/x", "PATH=/bin"]);
+        let mut short = 3_i32.to_ne_bytes().to_vec();
+        short.extend_from_slice(b"/bin/sh\0sh\0-c\0");
+        assert_eq!(parse_procargs(&short), None);
+        short.extend_from_slice(b"exit");
+        assert_eq!(parse_procargs(&short), None, "an unterminated argument");
+        short.extend_from_slice(b"\0HOME=/x");
+        assert_eq!(
+            parse_procargs(&short).map(|parsed| parsed.environment),
+            Some(Vec::new()),
+            "an unterminated entry is no entry"
+        );
+        assert_eq!(parse_procargs(&[1, 0]), None);
+        assert_eq!(parse_procargs(&(-1_i32).to_ne_bytes()), None);
+    }
+
     /// The process calls of the launchd backend, against the live kernel.
     /// They compile for every macOS target and run only on a Mac.
     #[cfg(target_os = "macos")]
@@ -894,6 +1062,46 @@ mod tests {
             assert!(kill_identified(found, libc::SIGKILL).unwrap());
             child.wait().unwrap();
             assert!(!kill_identified(found, libc::SIGKILL).unwrap());
+        }
+
+        // catches: the table listing cut short or read as bytes (so a live child is missing), or a
+        // failed listing answered as an empty table
+        #[test]
+        fn every_pid_is_listed() {
+            let mut child = sleeper();
+            let pids = all_pids().unwrap();
+            assert!(pids.contains(&std::process::id()), "{} pids", pids.len());
+            assert!(pids.contains(&child.id()), "{} pids", pids.len());
+            assert!(pids.contains(&1), "launchd is listed");
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+
+        // catches: another process's arguments or environment misread from KERN_PROCARGS2 (the
+        // leak check of the integration tests would then find nothing), or a gone process read
+        #[test]
+        fn arguments_and_environment_of_a_child() {
+            let mut child = Command::new("/bin/sleep")
+                .arg("30")
+                .env_clear()
+                .env("DSHD_SYS_TEST", "planted value")
+                .spawn()
+                .unwrap();
+            let pid = child.id();
+            let read = process_arguments(pid).unwrap();
+            assert_eq!(read.argv, ["/bin/sleep", "30"]);
+            assert!(
+                read.environment
+                    .iter()
+                    .any(|entry| entry == "DSHD_SYS_TEST=planted value"),
+                "{read:?}"
+            );
+            let mine = process_arguments(std::process::id()).unwrap();
+            assert!(!mine.argv.is_empty(), "{mine:?}");
+            child.kill().unwrap();
+            child.wait().unwrap();
+            assert_eq!(process_arguments(pid), None);
+            assert_eq!(process_arguments(0), None);
         }
 
         // catches: the live counters' FFI failing for a live process, or a timebase that cannot turn

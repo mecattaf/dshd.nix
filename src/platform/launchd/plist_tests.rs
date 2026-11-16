@@ -79,14 +79,12 @@ fn job_spec_runs_the_current_runner_in_the_instance() {
 
 // catches: a rendered plist that differs in any byte from the golden file (keys, order, indentation, newline)
 #[test]
-#[ignore = "packet D01: plist renderer"]
 fn renders_the_golden_web_instance() {
     assert_golden("web-1", &render(&spec("/Users/u", "web-1")).unwrap());
 }
 
 // catches: a path with XML metacharacters producing a plist launchd cannot parse
 #[test]
-#[ignore = "packet D01: plist renderer"]
 fn escapes_xml_metacharacters_in_paths() {
     assert_golden(
         "escaped-home",
@@ -96,7 +94,6 @@ fn escapes_xml_metacharacters_in_paths() {
 
 // catches: the longest instance name truncated or rendered differently
 #[test]
-#[ignore = "packet D01: plist renderer"]
 fn renders_the_longest_name() {
     assert_golden(
         "longest-name",
@@ -106,7 +103,6 @@ fn renders_the_longest_name() {
 
 // catches: a rendered plist whose top-level keys are not exactly the allow-list, in order
 #[test]
-#[ignore = "packet D01: plist renderer"]
 fn rendered_keys_are_exactly_the_allow_list() {
     for name in ["web-1", "acp", "task-0001", &"z".repeat(63)] {
         let xml = render(&spec("/Users/u", name)).unwrap();
@@ -120,7 +116,6 @@ fn rendered_keys_are_exactly_the_allow_list() {
 
 // catches: a schedule key or any key outside the allow-list passing the check
 #[test]
-#[ignore = "packet D01: plist renderer"]
 fn check_keys_names_the_first_key_outside_the_list() {
     let with = |extra: &str| {
         format!(
@@ -148,7 +143,6 @@ fn check_keys_names_the_first_key_outside_the_list() {
 
 // catches: keys of a nested dictionary read as top-level keys, or top-level keys missed after a nested one
 #[test]
-#[ignore = "packet D01: plist renderer"]
 fn nested_keys_are_not_top_level() {
     let xml = "<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>x</string>\n\t<key>Outer</key>\n\t<dict>\n\t\t<key>Inner</key>\n\t\t<string>y</string>\n\t</dict>\n\t<key>RunAtLoad</key>\n\t<true/>\n</dict>\n</plist>\n";
     assert_eq!(top_level_keys(xml), ["Label", "Outer", "RunAtLoad"]);
@@ -156,7 +150,6 @@ fn nested_keys_are_not_top_level() {
 
 // catches: a path that is not UTF-8 written lossily into the plist instead of refused
 #[test]
-#[ignore = "packet D01: plist renderer"]
 fn a_path_that_is_not_utf8_is_refused() {
     let mut spec = spec("/Users/u", "web-1");
     spec.working_directory = PathBuf::from(OsString::from_vec(b"/Users/\xff".to_vec()));

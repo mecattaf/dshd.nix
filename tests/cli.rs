@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::{MetadataExt, symlink};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Output, Stdio};
 
@@ -43,11 +43,18 @@ const FAKES: [&str; 4] = ["systemctl", "journalctl", "nix-store", "xdg-open"];
 /// The utilities the fakes run, linked from the test's own `PATH`.
 const UTILITIES: [&str; 8] = ["cat", "mkdir", "ln", "rm", "head", "tail", "sleep", "sed"];
 /// What a case directory may hold.
-const CASE_ENTRIES: [&str; 11] = [
+const CASE_ENTRIES: [&str; 12] = [
     "argv", "exit", "stdout", "stderr", "env", "root", "links", "absent", "calls", "gone", "kept",
+    "pending",
 ];
 const ROOT_TOKEN: &str = "%ROOT%";
 const RELEASE_TOKEN: &str = "%RELEASE%";
+/// What the hash of a directory store entry becomes: it covers the
+/// runner's bytes, which differ from build to build.
+const HASH_TOKEN: &str = "%HASH%";
+/// The infix after an entry's hash, and the hash's length.
+const ENTRY_INFIX: &str = "-dshd-release-";
+const ENTRY_HASH_LEN: usize = 32;
 /// Lines that depend on the host's linger setting, not on dshd.
 const HOST_STDERR: &str = "dshd: warning: linger is off";
 const HOST_STDOUT: &str = "  linger: ";
@@ -112,13 +119,30 @@ fn golden_cases_hold_without_drift() -> TestResult {
         .into());
     }
     for case in &cases {
-        match run_case(case, &release) {
-            Ok(differences) => failures.extend(
+        let pending = fs::read_to_string(Path::new(GOLDEN).join(case).join("pending")).ok();
+        let differences = match run_case(case, &release) {
+            Ok(differences) => differences,
+            Err(error) => vec![error.to_string()],
+        };
+        match pending {
+            // A case that waits for a packet is run; it fails the harness
+            // only once it passes, so its `pending` goes with the packet's
+            // merge, as an `#[ignore]` does.
+            Some(why) if differences.is_empty() => failures.push(format!(
+                "{case}: passes, so remove its pending file ({})",
+                why.trim()
+            )),
+            Some(why) => writeln!(
+                io::stderr(),
+                "dshd golden case {case} is pending ({}): {} differences",
+                why.trim(),
+                differences.len()
+            )?,
+            None => failures.extend(
                 differences
                     .into_iter()
                     .map(|difference| format!("{case}: {difference}")),
             ),
-            Err(error) => failures.push(format!("{case}: {error}")),
         }
     }
     assert!(
@@ -170,7 +194,7 @@ fn check_shape(case: &str) -> TestResult {
 fn run_case(case: &str, release: &Path) -> TestResult<Vec<String>> {
     let scratch = std::env::temp_dir().join(format!("dshd-golden-{case}-{}", process::id()));
     if scratch.exists() {
-        fs::remove_dir_all(&scratch)?;
+        remove_tree(&scratch)?;
     }
     fs::create_dir_all(&scratch)?;
     let root = scratch.canonicalize()?;
@@ -180,8 +204,27 @@ fn run_case(case: &str, release: &Path) -> TestResult<Vec<String>> {
         release: text_of(release)?.to_owned(),
     };
     let differences = case.prepare().and_then(|()| case.run());
-    fs::remove_dir_all(&root)?;
+    remove_tree(&root)?;
     differences
+}
+
+/// Removes a case root, giving each directory the owner's write permission
+/// first, since a directory store entry dshd wrote is read-only.
+fn remove_tree(path: &Path) -> TestResult {
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let mut permissions = fs::symlink_metadata(&dir)?.permissions();
+        permissions.set_mode(permissions.mode() | 0o700);
+        fs::set_permissions(&dir, permissions)?;
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    fs::remove_dir_all(path)?;
+    Ok(())
 }
 
 /// One case: its directory, its root and the release, as text.
@@ -202,10 +245,14 @@ impl Case {
             .replace(ROOT_TOKEN, &self.root)
     }
 
-    /// The release, then the root, replaced by their tokens.
+    /// The release, then the root, replaced by their tokens, and every
+    /// directory store entry's hash by its own.
     fn normalize(&self, text: &str) -> String {
-        text.replace(&self.release, RELEASE_TOKEN)
-            .replace(&self.root, ROOT_TOKEN)
+        mask_entry_hashes(
+            &text
+                .replace(&self.release, RELEASE_TOKEN)
+                .replace(&self.root, ROOT_TOKEN),
+        )
     }
 
     /// A file of the case; `None` when the case has none.
@@ -605,6 +652,55 @@ fn host_free(line: &str) -> Option<String> {
         });
     }
     Some(format!("{value}\n"))
+}
+
+/// `/<32 lowercase hex>-dshd-release-` becomes `/%HASH%-dshd-release-`.
+/// A Nix store path is `%RELEASE%` by then, or has a hash of another
+/// alphabet in practice.
+fn mask_entry_hashes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(ENTRY_INFIX) {
+        let (before, after) = rest.split_at(at);
+        let hash_at = before.len().saturating_sub(ENTRY_HASH_LEN);
+        let prefix = before.get(..hash_at).filter(|prefix| prefix.ends_with('/'));
+        let hashed = before.len() > ENTRY_HASH_LEN
+            && before.get(hash_at..).is_some_and(|hash| {
+                hash.bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            });
+        match prefix {
+            Some(prefix) if hashed => {
+                out.push_str(prefix);
+                out.push_str(HASH_TOKEN);
+            }
+            _ => out.push_str(before),
+        }
+        out.push_str(ENTRY_INFIX);
+        rest = after.get(ENTRY_INFIX.len()..).unwrap_or_default();
+    }
+    out.push_str(rest);
+    out
+}
+
+// catches: an entry hash left in a compared output, or a store path or another name masked with it
+#[test]
+fn entry_hashes_are_masked() {
+    let hash = "0123456789abcdef0123456789abcdef";
+    assert_eq!(
+        mask_entry_hashes(&format!(
+            "{{\"entry\":\"/s/.releases/{hash}-dshd-release-stable\"}}"
+        )),
+        "{\"entry\":\"/s/.releases/%HASH%-dshd-release-stable\"}"
+    );
+    for kept in [
+        "%RELEASE%/bin/dsh",
+        "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-dshd-release-stub-dsh-golden",
+        "/s/short-dshd-release-x",
+        "dshd-release-",
+    ] {
+        assert_eq!(mask_entry_hashes(kept), kept);
+    }
 }
 
 /// The regular files under `dir` that contain `needle`; links are not

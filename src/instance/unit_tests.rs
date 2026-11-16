@@ -3,9 +3,11 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 use super::*;
 use crate::fsx::testing::{Scratch, fake_nix_store, install_script, tree};
+use crate::name;
 use crate::record::ReleaseFile;
 
 const FIXTURE: &str = include_str!("../../tests/fixtures/instance.json");
@@ -409,6 +411,22 @@ fn web_port_last_run_and_id() {
     let (one, two) = (new_id().unwrap(), new_id().unwrap());
     assert!(name::id_shaped(&one), "{one}");
     assert_ne!(one, two);
+}
+
+#[test]
+fn uuid_v4_text_sets_version_and_variant() {
+    assert_eq!(
+        uuid_v4_text([0; 16]),
+        "00000000-0000-4000-8000-000000000000"
+    );
+    assert_eq!(
+        uuid_v4_text([0xff; 16]),
+        "ffffffff-ffff-4fff-bfff-ffffffffffff"
+    );
+    let counted: [u8; 16] = std::array::from_fn(|i| u8::try_from(i * 17).unwrap());
+    let text = uuid_v4_text(counted);
+    assert_eq!(text, "00112233-4455-4677-8899-aabbccddeeff");
+    assert!(name::id_shaped(&text), "{text}");
 }
 
 #[path = "state_tests.rs"]

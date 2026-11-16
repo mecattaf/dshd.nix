@@ -5,11 +5,11 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::error::{Error, RecipeDifference};
 use crate::fsx::{self, Lock};
-use crate::name::{self, InstanceDir, InstanceName, LOCK_FILE, MAX_LEN, StateRoot};
+use crate::name::{InstanceDir, InstanceName, LOCK_FILE, MAX_LEN, StateRoot};
 use crate::record::{
     EnvVar, InstanceRecord, LastRun, OsText, ProfileRef, RunPatch, RunStdin, Transport,
 };
@@ -21,7 +21,8 @@ mod staging;
 /// Mode of `instance.json` and `web-port`: the record holds the captured
 /// environment.
 const RECORD_MODE: u32 = 0o600;
-/// The kernel's source of fresh random UUIDs.
+/// The kernel's source of fresh random UUIDs on Linux.
+#[cfg(target_os = "linux")]
 const UUID_SOURCE: &str = "/proc/sys/kernel/random/uuid";
 /// The word a generated name starts with when the profile name has no
 /// usable character.
@@ -420,7 +421,11 @@ pub fn read_last_run(dir: &InstanceDir) -> Result<Option<LastRun>, Error> {
 }
 
 /// A fresh UUID from `/proc/sys/kernel/random/uuid`.
+#[cfg(target_os = "linux")]
 pub fn new_id() -> Result<String, Error> {
+    use crate::name;
+    use std::path::Path;
+
     let source = Path::new(UUID_SOURCE);
     let Some(text) = fsx::read_text(source)? else {
         return Err(Error::io(
@@ -439,6 +444,36 @@ pub fn new_id() -> Result<String, Error> {
             io::Error::from(io::ErrorKind::InvalidData),
         ))
     }
+}
+
+/// A fresh UUID where no `/proc` exists: version 4, from 16 bytes of
+/// `getentropy`.
+#[cfg(not(target_os = "linux"))]
+pub fn new_id() -> Result<String, Error> {
+    Ok(uuid_v4_text(crate::sys::random_16()?))
+}
+
+/// 16 random bytes as a version 4 UUID (RFC 9562) in its lowercase text
+/// form: the version nibble set to 4, the variant bits to `10`.
+#[cfg(any(test, not(target_os = "linux")))]
+fn uuid_v4_text(bytes: [u8; 16]) -> String {
+    let mut text = String::with_capacity(36);
+    for (index, byte) in bytes.into_iter().enumerate() {
+        let byte = match index {
+            6 => (byte & 0x0f) | 0x40,
+            8 => (byte & 0x3f) | 0x80,
+            _ => byte,
+        };
+        if matches!(index, 4 | 6 | 8 | 10) {
+            text.push('-');
+        }
+        text.extend(
+            [byte >> 4, byte & 0x0f]
+                .into_iter()
+                .filter_map(|nibble| char::from_digit(u32::from(nibble), 16)),
+        );
+    }
+    text
 }
 
 fn name_word(profile: &str) -> String {

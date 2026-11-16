@@ -362,6 +362,13 @@ impl ServiceManager for LaunchdManager {
         Ok(())
     }
 
+    fn forget(&self, name: &InstanceName, _facts: &UnitFacts) -> Result<(), Error> {
+        // launchd keeps a job whose run ended (a crash, a killed runner, a
+        // finished task) loaded until it is booted out, and its plist is
+        // about to go with the directory. A job it does not hold is fine.
+        stop::stop(self, name)
+    }
+
     fn enable(&self, name: &InstanceName) -> Result<Vec<String>, Error> {
         enable::enable(self, name)
     }

@@ -1,11 +1,12 @@
-//! `dshd rm [--invocation ID] NAME`: under the root and instance locks, refuses a
-//! running instance, reports the status observed just before deletion,
-//! clears the unit's failed state and its `dshd.target` link, and removes
-//! the tree. A record a newer dshd wrote is removed too, since `rm` is the
-//! remedy dshd prints for it: removal reads nothing from the record.
-//! `--invocation` first compares the unit's invocation, as `stop
-//! --invocation` does, under the same locks, so a run dshd starts after
-//! the caller looked is never removed.
+//! `dshd rm [--invocation ID] NAME`: under the root and instance locks,
+//! refuses a running instance, reports the status observed just before
+//! deletion, has the manager let go of the instance (on Linux, clears the
+//! unit's failed state; under launchd, boots out a job whose run ended),
+//! removes its `dshd.target` link, and removes the tree. A record a newer
+//! dshd wrote is removed too, since `rm` is the remedy dshd prints for it:
+//! removal reads nothing from the record. `--invocation` first compares
+//! the unit's invocation, as `stop --invocation` does, under the same
+//! locks, so a run dshd starts after the caller looked is never removed.
 
 use super::lifecycle;
 use super::status::{self, Shown};
@@ -45,9 +46,7 @@ pub(super) fn run(ctx: &Context, args: &RmArgs) -> Result<(), Error> {
         return Err(Error::InstanceRunning(name.to_string()));
     }
     let report = status::report_from(ctx, name, &facts, false)?;
-    if facts.active_state == ActiveState::Failed {
-        ctx.manager.reset_failed(name)?;
-    }
+    ctx.manager.forget(name, &facts)?;
     let mut shown = Shown::new(OutcomeSlug::Removed, report);
     if shown.status.enabled {
         ctx.manager.disable(name)?;

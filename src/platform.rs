@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use crate::error::Error;
 use crate::name::{InstanceName, RuntimeDir, StateRoot};
-use crate::systemctl::UnitFacts;
+use crate::systemctl::{ActiveState, UnitFacts};
 
 pub mod launchd;
 pub mod systemd;
@@ -120,6 +120,18 @@ pub trait ServiceManager: fmt::Debug {
 
     /// Clears a failed state; an instance that is not failed is fine.
     fn reset_failed(&self, name: &InstanceName) -> Result<(), Error>;
+
+    /// Lets go of an instance that is not running, just before `rm`
+    /// removes its directory, so the manager keeps nothing that names it.
+    /// `facts` is what `rm` read under the locks. By default that clears a
+    /// failed state, as `rm` always did on Linux.
+    fn forget(&self, name: &InstanceName, facts: &UnitFacts) -> Result<(), Error> {
+        if facts.active_state == ActiveState::Failed {
+            self.reset_failed(name)
+        } else {
+            Ok(())
+        }
+    }
 
     /// Makes the instance start with the login session (or the user
     /// manager). Returns the command lines the human page echoes, in

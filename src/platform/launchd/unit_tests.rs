@@ -145,3 +145,21 @@ fn live_counters_come_from_the_job_tree_while_up() {
         );
     }
 }
+
+// catches: `rm` of an instance whose run ended leaving launchd holding a job whose plist is gone
+#[test]
+fn forget_boots_out_an_ended_job_and_accepts_none() {
+    let bench = Bench::new("ld-forget", "web-1");
+    bench.fake.hold("dshd.web-1", &bench.plist(), None, Some(0));
+    let facts = facts::unit_facts(&bench.target(), &facts::Observed::default());
+    assert_eq!(facts.active_state, ActiveState::Inactive);
+    bench.manager.forget(&bench.name, &facts).unwrap();
+    assert!(bench.manager.job(&bench.name).unwrap().is_none());
+    assert!(
+        bench
+            .fake
+            .calls()
+            .contains(&argv(&["bootout", &bench.target()]))
+    );
+    bench.manager.forget(&bench.name, &facts).unwrap();
+}

@@ -103,10 +103,15 @@ fn exchange(stream: &UnixStream, request: &Handshake) -> io::Result<HandshakeRep
     line.push(b'\n');
     let mut writer = stream;
     writer.write_all(&line)?;
-    let reply = read_line(stream)?;
-    stream.set_read_timeout(None)?;
-    serde_json::from_slice(&reply)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    let reply: HandshakeReply = serde_json::from_slice(&read_line(stream)?)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    // Only an attached connection is read again, and with no timeout. The
+    // relay closes any other once it has answered, and on macOS changing
+    // a socket option after the peer closed fails with EINVAL.
+    if reply == HandshakeReply::Attached {
+        stream.set_read_timeout(None)?;
+    }
+    Ok(reply)
 }
 
 /// Reads one line a byte at a time, so nothing the relay sends after it is

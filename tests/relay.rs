@@ -15,6 +15,8 @@ use wire as pump;
 mod backpressure;
 #[path = "relay/handover.rs"]
 mod handover;
+#[path = "relay/long_path.rs"]
+mod long_path;
 #[path = "relay/protocol.rs"]
 mod protocol;
 #[path = "relay/stop.rs"]

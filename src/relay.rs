@@ -31,7 +31,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::error::Error;
-use crate::name::{InstanceName, RuntimeDir};
+use crate::name::InstanceName;
 use crate::relay::held::Held;
 use crate::relay::protocol::{Handshake, HandshakeReply, ProbeLine, Refusal};
 use crate::relay::pump::Frame;
@@ -58,6 +58,7 @@ const SOCKET_MODE: u32 = 0o600;
 /// reach the controller before closing it.
 const CHILD_EOF_GRACE: Duration = Duration::from_secs(1);
 /// The variable naming the user's runtime root, where clients find the socket.
+#[cfg(not(target_os = "macos"))]
 const RUNTIME_ROOT: &str = "XDG_RUNTIME_DIR";
 /// The thread that routes dsh's stdout.
 const CHILD_THREAD: &str = "dshd-acp-child";
@@ -289,10 +290,10 @@ impl Relay {
 }
 
 /// `dshd-run attach NAME [--takeover]`: connects to the socket under
-/// `$XDG_RUNTIME_DIR/dshd/NAME`, performs the handshake, then pumps the
-/// caller's stdio to the relay until either side ends. Exit 0 on a clean
-/// end, 4 when refused (attached-elsewhere), 5 when the instance is not
-/// running, 1 on I/O failure.
+/// `$XDG_RUNTIME_DIR/dshd/NAME` (on macOS `<instance>/run`), performs the
+/// handshake, then pumps the caller's stdio to the relay until either side
+/// ends. Exit 0 on a clean end, 4 when refused (attached-elsewhere), 5
+/// when the instance is not running, 1 on I/O failure.
 pub fn attach(name: &str, takeover: bool) -> u8 {
     conclude(attach_stdio(name, takeover))
 }
@@ -320,6 +321,7 @@ fn print_probe(name: &str) -> Result<(), Error> {
 }
 
 /// `$XDG_RUNTIME_DIR/dshd/NAME/acp.sock`.
+#[cfg(not(target_os = "macos"))]
 fn client_socket(name: &str) -> Result<PathBuf, Error> {
     let name = InstanceName::parse(name)?;
     let root = std::env::var_os(RUNTIME_ROOT)
@@ -328,7 +330,19 @@ fn client_socket(name: &str) -> Result<PathBuf, Error> {
     let root = root.ok_or_else(|| {
         Error::SystemdUnavailable(format!("{RUNTIME_ROOT} is not set to an absolute path"))
     })?;
-    Ok(RuntimeDir::under(&root, &name).acp_socket())
+    Ok(crate::name::RuntimeDir::under(&root, &name).acp_socket())
+}
+
+/// `<instance>/run/acp.sock`, the instance under the home the password
+/// database names, as the launchd manager names it: launchd hands a
+/// client no runtime directory, and `$XDG_RUNTIME_DIR` is not read. The
+/// path may be longer than `sun_path`; `attach::handshake` reaches it.
+#[cfg(target_os = "macos")]
+fn client_socket(name: &str) -> Result<PathBuf, Error> {
+    use crate::platform::ServiceManager;
+    let name = InstanceName::parse(name)?;
+    let manager = crate::platform::launchd::LaunchdManager::from_env()?;
+    Ok(manager.runtime_dir(&name).acp_socket())
 }
 
 /// The error for a reply that is not the one asked for.

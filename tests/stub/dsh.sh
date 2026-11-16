@@ -12,6 +12,9 @@
 #   DSH_STUB_LOG    file each invocation appends its record to
 #   DSH_STUB_GATE   acp: a prompt containing "gate" waits until this file
 #                   exists, then removes it
+#   DSH_STUB_ANNOUNCE_AFTER_GATE
+#                   web, when 1: the announcement waits for DSH_STUB_GATE
+#                   the same way
 #   DSH_STUB_DELAY  headless: seconds to sleep after printing, before the
 #                   exit, so a task is still running when a check looks
 #   DSH_STUB_BACKGROUND
@@ -92,9 +95,12 @@ record_invocation() {
 	# Read by the shell itself before anything forks, since a shell may block
 	# signals around a fork.
 	blocked=absent
-	while read -r key value; do
-		[ "$key" != SigBlk: ] || blocked=$value
-	done </proc/self/status
+	# macOS has no /proc: the mask is then recorded as absent.
+	if [ -r /proc/self/status ]; then
+		while read -r key value; do
+			[ "$key" != SigBlk: ] || blocked=$value
+		done </proc/self/status
+	fi
 	{
 		printf 'invocation %s\nargc %s\nargv ' "$$" "$#"
 		if [ "$#" -gt 0 ]; then
@@ -118,10 +124,20 @@ run_after_ready() {
 	log "after-ready $$ $?"
 }
 
+# The sha256 of stdin: sha256sum, or on a system without it (macOS)
+# shasum, whose output has the same shape.
+sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum
+	else
+		shasum -a 256
+	fi
+}
+
 report_stdin() {
 	for arg in "$@"; do
 		[ "$arg" = - ] || continue
-		digest=$(sha256sum) || digest=unreadable
+		digest=$(sha256) || digest=unreadable
 		printf 'stub-dsh: stdin sha256=%s\n' "${digest%% *}" >&2
 		log "stdin $$ ${digest%% *}"
 		return
@@ -129,7 +145,7 @@ report_stdin() {
 }
 
 report_patch() {
-	digest=$(sha256sum 2>/dev/null <"$1") || digest=unreadable
+	digest=$(sha256 2>/dev/null <"$1") || digest=unreadable
 	printf 'stub-dsh: patch %s sha256=%s\n' "$1" "${digest%% *}" >&2
 }
 
@@ -208,14 +224,25 @@ serve_web() {
 			port=$((port + 1))
 		done
 	fi
+	if [ "${DSH_STUB_ANNOUNCE_AFTER_GATE:-}" = 1 ]; then
+		wait_gate
+	fi
 	log "web $$ $port"
 	printf 'dsh web: http://127.0.0.1:%s/?token=stub%s\n' "$port" "$$"
 }
 
+# A stop that arrives before the sleeper's pid is known is noted and acted
+# on once it is: a trap runs between commands, so one that ran right after
+# the sleeper started, before sleeper=$!, would leave it running.
 wait_for_stop() {
-	trap 'kill "${sleeper-}" 2>/dev/null; exit 0' TERM INT
+	trap 'stopped=1' TERM INT
 	sleep 2147483647 </dev/null >/dev/null 2>&1 &
 	sleeper=$!
+	trap 'kill "$sleeper" 2>/dev/null; exit 0' TERM INT
+	if [ -n "${stopped-}" ]; then
+		kill "$sleeper" 2>/dev/null
+		exit 0
+	fi
 	wait "$sleeper"
 	exit 0
 }

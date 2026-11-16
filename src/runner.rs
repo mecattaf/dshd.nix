@@ -215,7 +215,7 @@ fn located(raw: &str) -> Result<(InstanceName, StateRoot), Error> {
 }
 
 /// The state root whose instance directory for `name` is `cwd`.
-fn state_root_of(cwd: &Path, name: &InstanceName) -> Option<StateRoot> {
+pub(crate) fn state_root_of(cwd: &Path, name: &InstanceName) -> Option<StateRoot> {
     let root = StateRoot::new(cwd.parent()?.parent()?.to_path_buf());
     (root.instance(name).path() == cwd).then_some(root)
 }

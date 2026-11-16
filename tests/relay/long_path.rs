@@ -2,7 +2,9 @@
 //! the socket lives under the home (`<instance>/run/acp.sock`) and
 //! `sun_path` takes 104 bytes, so the client reaches such a path from
 //! inside its directory. On Linux the runtime path always fits; this test
-//! makes one that does not, to exercise the same client code.
+//! makes one that does not, to exercise the same client code. The client
+//! finds the socket under `$XDG_RUNTIME_DIR` on Linux, and on macOS in the
+//! instance its working directory is, as the CLI starts it.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -24,7 +26,13 @@ const SUN_PATH: usize = 108;
 fn a_socket_path_longer_than_sun_path_is_reached_from_its_directory() -> TestResult {
     let root = std::env::temp_dir().join(format!("dshd-long-socket-{}", process::id()));
     let runtime_root = root.join("r".repeat(SUN_PATH));
-    let dir = runtime_root.join("dshd").join("long");
+    // `<root>/dshd/long` is the runtime directory on Linux, the instance on macOS.
+    let instance = runtime_root.join("dshd").join("long");
+    let dir = if cfg!(target_os = "macos") {
+        instance.join(dshd::platform::launchd::RUN_DIR)
+    } else {
+        instance.clone()
+    };
     fs::create_dir_all(&dir)?;
     let socket = dir.join("acp.sock");
     assert!(socket.as_os_str().len() > SUN_PATH, "{}", socket.display());
@@ -48,12 +56,16 @@ fn a_socket_path_longer_than_sun_path_is_reached_from_its_directory() -> TestRes
         (&stream).write_all(&answer)?;
         Ok(line)
     });
-    let output = Command::new(env!("CARGO_BIN_EXE_dshd-run"))
+    let mut probe = Command::new(env!("CARGO_BIN_EXE_dshd-run"));
+    probe
         .args(["probe", "long"])
         .env_clear()
         .env("XDG_RUNTIME_DIR", &runtime_root)
-        .stdin(Stdio::null())
-        .output()?;
+        .stdin(Stdio::null());
+    if cfg!(target_os = "macos") {
+        probe.current_dir(&instance);
+    }
+    let output = probe.output()?;
     let probed = output.status.code() == Some(0);
     if !probed {
         // The fake relay still waits for a client: wake it, so the test fails instead of hanging.

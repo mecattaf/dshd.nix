@@ -49,9 +49,29 @@ fn invalid_frames_get_errors_and_relay_continues() -> TestResult {
 #[test]
 fn probe_and_attach_without_runner_are_not_running() -> TestResult {
     let (instance, running) = acp_instance("gone")?;
+    let stopped = dshd::error::Error::NotRunning("gone".to_owned());
+    if cfg!(target_os = "macos") {
+        // catches: a macOS client that finds the instance through $HOME, $XDG_STATE_HOME or
+        // $XDG_RUNTIME_DIR: each leads to this running relay, but outside the instance's
+        // directory the client looks under the home of the password database, where it does not run
+        let decoy = instance.path("decoy-home");
+        std::fs::create_dir_all(decoy.join(".local"))?;
+        std::os::unix::fs::symlink(instance.path("state"), decoy.join(".local/state"))?;
+        let elsewhere = instance
+            .runner("probe")
+            .current_dir(instance.path("work"))
+            .env("HOME", &decoy)
+            .env("XDG_STATE_HOME", instance.path("state"))
+            .output()?;
+        assert_eq!(
+            elsewhere.status.code(),
+            Some(i32::from(stopped.exit_code())),
+            "{}",
+            String::from_utf8_lossy(&elsewhere.stderr)
+        );
+    }
     assert_eq!(running.end(true)?.status, Some(0));
 
-    let stopped = dshd::error::Error::NotRunning("gone".to_owned());
     let probed = instance.runner("probe").output()?;
     assert_eq!(
         probed.status.code(),
@@ -67,6 +87,10 @@ fn probe_and_attach_without_runner_are_not_running() -> TestResult {
         "{}",
         String::from_utf8_lossy(&attached.stderr)
     );
+    if cfg!(target_os = "macos") {
+        // A macOS client is handed no runtime root; the check above is its counterpart.
+        return Ok(());
+    }
     let rootless = instance
         .runner("probe")
         .env_remove("XDG_RUNTIME_DIR")

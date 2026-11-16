@@ -61,6 +61,11 @@ fn echo_lines_name_the_verbs_dshd_runs() {
     );
     assert_eq!(manager.tool_name(), "launchctl");
     assert!(manager.relay_client_env().is_empty());
+    assert_eq!(
+        manager.relay_client_dir(&bench.name),
+        Some(manager.instance_dir(&bench.name).path().to_path_buf()),
+        "the relay client locates its instance from its working directory"
+    );
     assert!(!manager.linger("anyone"));
 }
 

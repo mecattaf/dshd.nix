@@ -346,15 +346,28 @@ fn client_socket(name: &str) -> Result<PathBuf, Error> {
     Ok(crate::name::RuntimeDir::under(&root, &name).acp_socket())
 }
 
-/// `<instance>/run/acp.sock`, the instance under the home the password
-/// database names, as the launchd manager names it: launchd hands a
-/// client no runtime directory, and `$XDG_RUNTIME_DIR` is not read. The
-/// path may be longer than `sun_path`; `attach::handshake` reaches it.
+/// `<instance>/run/acp.sock`. The instance is the one the working
+/// directory is, when it is `<state root>/dshd/NAME`: the CLI starts the
+/// client there (`ServiceManager::relay_client_dir`), as launchd starts
+/// the runner in it, and the runner locates its instance the same way.
+/// Elsewhere it is the instance under the home the password database
+/// names, as the launchd manager names it. launchd hands a client no
+/// runtime directory, and `$HOME`, `$XDG_STATE_HOME` and
+/// `$XDG_RUNTIME_DIR` are not read. The path may be longer than
+/// `sun_path`; `attach::handshake` reaches it.
 #[cfg(target_os = "macos")]
 fn client_socket(name: &str) -> Result<PathBuf, Error> {
     use crate::platform::ServiceManager;
+    use crate::platform::launchd::{LaunchdManager, RUN_DIR};
     let name = InstanceName::parse(name)?;
-    let manager = crate::platform::launchd::LaunchdManager::from_env()?;
+    let located = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| crate::runner::state_root_of(&cwd, &name));
+    if let Some(root) = located {
+        let run = root.instance(&name).path().join(RUN_DIR);
+        return Ok(crate::name::RuntimeDir::new(run).acp_socket());
+    }
+    let manager = LaunchdManager::from_env()?;
     Ok(manager.runtime_dir(&name).acp_socket())
 }
 

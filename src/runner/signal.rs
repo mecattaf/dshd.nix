@@ -33,6 +33,18 @@ pub(crate) fn supervise(
     stop_asked: &AtomicBool,
     on_stop: impl FnOnce(),
 ) -> (ChildEnd, Option<i32>) {
+    supervise_with(child, stop_asked, on_stop, |_| {})
+}
+
+/// [`supervise`], which also calls `on_wake` on the main thread at every
+/// wake while dsh still runs, before it waits again: the launchd runner's
+/// stop deadline acts there, since only the main thread signals dsh.
+pub(crate) fn supervise_with(
+    child: &mut Child,
+    stop_asked: &AtomicBool,
+    on_stop: impl FnOnce(),
+    mut on_wake: impl FnMut(&mut Child),
+) -> (ChildEnd, Option<i32>) {
     let mut on_stop = Some(on_stop);
     let mut stop_signal = None;
     loop {
@@ -46,6 +58,7 @@ pub(crate) fn supervise(
         {
             stop();
         }
+        on_wake(child);
         match sys::wait_signal(RUNNER_SIGNALS) {
             // dsh ended, stopped or continued, or a thread asked for a stop: look again.
             Ok(SIGCHLD) => {}
@@ -75,6 +88,13 @@ pub(crate) fn supervise(
 /// thread's `sigwait`.
 pub(crate) fn ask_stop(stop_asked: &AtomicBool) {
     stop_asked.store(true, Ordering::SeqCst);
+    wake();
+}
+
+/// Wakes the main thread's `sigwait` from any other thread with SIGCHLD to
+/// the runner's own pid; the main thread then reads the flags it was woken
+/// for.
+pub(crate) fn wake() {
     if let Err(error) = sys::kill(process::id(), SIGCHLD) {
         log_line(&format!("cannot wake the runner's main thread: {error}"));
     }

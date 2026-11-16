@@ -153,15 +153,7 @@ impl Place {
     /// The working directory must be `<state root>/dshd/<name>`
     /// (`WorkingDirectory=%S/dshd/%i`), and `$RUNTIME_DIRECTORY` absolute.
     fn from_process(raw: &str) -> Result<Self, Error> {
-        let name = InstanceName::parse(raw)?;
-        let cwd = std::env::current_dir()
-            .map_err(|source| Error::io("read", "the working directory", source))?;
-        let root = state_root_of(&cwd, &name).ok_or_else(|| {
-            Error::InvalidArgument(format!(
-                "the working directory {} is not the state directory of {name}",
-                cwd.display()
-            ))
-        })?;
+        let (name, root) = located(raw)?;
         let runtime = std::env::var_os(RUNTIME_DIRECTORY)
             .map(PathBuf::from)
             .filter(|path| path.is_absolute());
@@ -182,6 +174,21 @@ impl Place {
     fn runtime_file(&self, file: &str) -> PathBuf {
         self.runtime.path().join(file)
     }
+}
+
+/// The instance `raw` names and the state root, from the working
+/// directory, which must be `<state root>/dshd/<name>`.
+fn located(raw: &str) -> Result<(InstanceName, StateRoot), Error> {
+    let name = InstanceName::parse(raw)?;
+    let cwd = std::env::current_dir()
+        .map_err(|source| Error::io("read", "the working directory", source))?;
+    let root = state_root_of(&cwd, &name).ok_or_else(|| {
+        Error::InvalidArgument(format!(
+            "the working directory {} is not the state directory of {name}",
+            cwd.display()
+        ))
+    })?;
+    Ok((name, root))
 }
 
 /// The state root whose instance directory for `name` is `cwd`.
@@ -219,20 +226,36 @@ impl Launch {
     /// crash leaves behind for `interrupted`.
     fn prepare(raw: &str) -> Result<Self, Error> {
         let place = Place::from_process(raw)?;
+        let runner_environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+        Self::prepare_at(
+            place,
+            &runner_environment,
+            unit_value(INVOCATION_ID),
+            systemctl::boot_id,
+        )
+    }
+
+    /// [`Launch::prepare`] at `place`, with the runner's environment, the
+    /// run's invocation id and the boot id source the platform gives.
+    fn prepare_at(
+        place: Place,
+        runner_environment: &[(OsString, OsString)],
+        invocation_id: String,
+        boot_id: impl FnOnce() -> Result<String, Error>,
+    ) -> Result<Self, Error> {
         let started_at = fsx::unix_now();
         let record = instance::load_strict(&place.root, &place.name)?.record;
         let cwd = fsx::canonical_dir(Path::new(record.cwd.as_os_str()))?;
         let release = fsx::read_link(&place.dir.current())?
             .ok_or_else(|| inconsistent(&place.name, "the current release link is missing"))?;
         let release_file = release::validate(&release)?;
-        let runner_environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
         let environment = launch::compose_environment(
             &record.environment,
-            &runner_environment,
+            runner_environment,
             &release_file,
             Path::new(record.profile.dsh_home.as_os_str()),
             &cwd,
-            &runner_environment,
+            runner_environment,
         );
         let dsh = release.join(RELEASE_DSH);
         check_transport(
@@ -248,9 +271,9 @@ impl Launch {
         let start = LastRun {
             id: record.id.clone(),
             release_path: OsText::new(release.clone()),
-            boot_id: systemctl::boot_id()?,
+            boot_id: boot_id()?,
             started_at,
-            invocation_id: unit_value(INVOCATION_ID),
+            invocation_id,
             end: None,
             unrecognized: serde_json::Map::new(),
         };
@@ -463,15 +486,20 @@ fn ending(end: ChildEnd, status: u8) -> String {
             "dsh asked to be restarted (status {DSH_RESTART}); exiting {status} so systemd restarts the instance"
         );
     }
-    let how = match (end.exit_code, end.signal) {
-        (Some(code), _) => format!("dsh exited with status {code}"),
-        (None, Some(signal)) => format!("dsh was killed by signal {signal}"),
-        (None, None) => "dsh ended without a status".to_owned(),
-    };
+    let how = how_dsh_ended(end);
     if status == EXIT_TEMPFAIL {
         format!("{how} after it was ready; exiting {status} so systemd restarts the instance")
     } else {
         format!("{how}; exiting {status}")
+    }
+}
+
+/// How `dsh` ended, in the words of the runner's last line about it.
+fn how_dsh_ended(end: ChildEnd) -> String {
+    match (end.exit_code, end.signal) {
+        (Some(code), _) => format!("dsh exited with status {code}"),
+        (None, Some(signal)) => format!("dsh was killed by signal {signal}"),
+        (None, None) => "dsh ended without a status".to_owned(),
     }
 }
 

@@ -105,7 +105,10 @@ fn observe(
 }
 
 /// A job as one line of the domain's `services` block shows it: running
-/// with its pid, or not running with its last exit code.
+/// with its pid, or not running with its last exit code. A negative last
+/// exit is the signal that ended the job, as `launchctl list` documents
+/// and a macOS 26 runner printed (`-9` for a runner killed by SIGKILL, whose
+/// own `print` says `last terminating signal = Killed: 9`).
 fn listed_job(entry: &ServiceEntry) -> JobFacts {
     JobFacts {
         state: if entry.pid.is_some() {
@@ -115,7 +118,10 @@ fn listed_job(entry: &ServiceEntry) -> JobFacts {
         },
         pid: entry.pid,
         runs: None,
-        last_exit: entry.last_exit.map(LastExit::Code),
+        last_exit: entry.last_exit.map(|code| match code.checked_neg() {
+            Some(signal) if signal > 0 => LastExit::Signal(signal),
+            _ => LastExit::Code(code),
+        }),
         path: None,
     }
 }

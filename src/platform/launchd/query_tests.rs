@@ -98,3 +98,18 @@ fn no_gui_session_exits_7() {
         );
     }
 }
+
+// catches: `ls` reading a killed job's negative last exit as an exit code while `get` reads the signal
+#[test]
+fn show_many_reads_a_negative_last_exit_as_the_signal() {
+    let bench = Bench::new("ld-query-signal", "web-1");
+    bench
+        .fake
+        .hold("dshd.web-1", &bench.plist(), None, Some(-9));
+    let facts = show_many(&bench.manager, std::slice::from_ref(&bench.name)).unwrap();
+    let [facts] = facts.as_slice() else {
+        panic!("{facts:?}");
+    };
+    assert_eq!(facts.exec_main_status, 9);
+    assert_eq!(facts.main_pid, 0);
+}

@@ -366,9 +366,15 @@ impl ServiceManager for LaunchdManager {
     }
 }
 
-/// The start time of a process on this platform. The macOS source
-/// (`proc_pidinfo`) is not built yet, so it is unknown and no state file
-/// reads live.
+/// The start time of a process on macOS: `proc_pidinfo`.
+#[cfg(target_os = "macos")]
+fn native_process_start(pid: u32) -> Option<u64> {
+    crate::sys::process_start(pid)
+}
+
+/// Off macOS the backend runs only under test, where the bench supplies
+/// start times: a real one is unknown, so no state file reads live.
+#[cfg(not(target_os = "macos"))]
 fn native_process_start(_pid: u32) -> Option<u64> {
     None
 }
